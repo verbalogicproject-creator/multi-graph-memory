@@ -40,6 +40,8 @@ First return package for Codex. Not released, not published, no remote configure
 - **Non-total ranking order.** Equal-scoring items kept input order, so reversing the candidate list changed the ranking. Ties now break on id.
 - **Direction bar depended on retrieval.** Taste lessons were filtered only at packet assembly; the bar now applies at candidate selection.
 - **Adapter did not create its cluster directory**, so a first run failed on a fresh machine.
+- **`federatedQuery` threw synchronously** while declaring a `Promise`, so a caller using `.catch()` would have taken an uncaught exception instead of a rejection.
+- **`ControlStore` did not create its parent directory**, the same first-run failure already fixed in the cluster and vector adapters.
 - **Two weak tests** replaced: one asserted a tautology and passed without exercising its subject; one hedged across two error codes, masking which check fired.
 
 ### Upstream
