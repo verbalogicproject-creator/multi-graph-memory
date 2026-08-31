@@ -78,3 +78,72 @@ test("live: asymmetric query/document formatting retrieves the right document", 
   );
   console.log(`    live similarity: relevant=${relevantScore.toFixed(4)} unrelated=${unrelatedScore.toFixed(4)}`);
 });
+
+test("live: the embedded adapter ranks by genuine cosine, not a stand-in", options, async () => {
+  const { EmbeddedRelevanceAdapter } = await import("../src/relevance/embedded.ts");
+  const { MemoryVectorStore } = await import("../src/relevance/vector-store.ts");
+  const { GeminiEmbeddingProvider: Provider } = await import("../src/providers/gemini.ts");
+
+  const now = Date.parse("2026-08-31T00:00:00.000Z");
+  const base = {
+    status: "approved" as const, scope: ["x"], sourceEpisodeIds: ["e"], evidenceIds: ["v"],
+    contradictionIds: [], projectId: "p", limits: [], createdAt: "2026-08-30T00:00:00.000Z",
+    updatedAt: "2026-08-30T00:00:00.000Z", reuseCount: 0, deviationIds: [],
+  };
+
+  // Deliberately share no vocabulary with the query, so ONLY a semantic signal
+  // can retrieve the right one. Lexical matching would find neither.
+  const lessons = [
+    { ...base, id: "l_esm", domain: "build" as const,
+      trigger: "Bundler halts on a CommonJS-only plugin",
+      recommendation: "Choose a package release that publishes an ES module entrypoint." },
+    { ...base, id: "l_colour", domain: "taste" as const,
+      trigger: "Palette felt cold",
+      recommendation: "Warm the accent hue and soften the contrast between panels." },
+  ];
+
+  const adapter = new EmbeddedRelevanceAdapter({
+    embedder: new Provider({ dimensions: 768 }),
+    vectors: new MemoryVectorStore(),
+    now: () => now,
+  });
+
+  const indexed = await adapter.indexLessons(lessons);
+  assert.equal(indexed.embedded, 2);
+
+  const ranked = await adapter.rank(lessons, {
+    projectId: "p",
+    task: "my build breaks because a dependency ships require() only",
+  });
+
+  assert.ok(ranked.length > 0, "a semantic signal must retrieve something");
+  assert.equal(ranked[0]?.lesson.id, "l_esm", "cosine must pick the module-format lesson");
+  assert.ok(ranked[0]!.signals.semantic !== undefined, "the semantic signal must be real");
+  assert.match(ranked[0]!.reason, /cosine 0\.\d+/);
+  console.log(`    live ranking: ${ranked.map((r) => `${r.lesson.id}(${r.signals.semantic?.toFixed(3)})`).join(" > ")}`);
+});
+
+test("live: re-embedding is forced when the lesson text changes", options, async () => {
+  const { EmbeddedRelevanceAdapter } = await import("../src/relevance/embedded.ts");
+  const { MemoryVectorStore } = await import("../src/relevance/vector-store.ts");
+  const { GeminiEmbeddingProvider: Provider } = await import("../src/providers/gemini.ts");
+
+  const store = new MemoryVectorStore();
+  const adapter = new EmbeddedRelevanceAdapter({
+    embedder: new Provider({ dimensions: 768 }),
+    vectors: store,
+  });
+
+  const lesson = {
+    id: "l1", status: "approved" as const, trigger: "t", recommendation: "original recommendation",
+    scope: ["x"], sourceEpisodeIds: ["e"], evidenceIds: ["v"], contradictionIds: [],
+    projectId: "p", domain: "build" as const, limits: [], createdAt: "2026-08-30T00:00:00.000Z",
+    updatedAt: "2026-08-30T00:00:00.000Z", reuseCount: 0, deviationIds: [],
+  };
+
+  assert.deepEqual(await adapter.indexLessons([lesson]), { embedded: 1, reused: 0, reEmbedded: 0 });
+  assert.deepEqual(await adapter.indexLessons([lesson]), { embedded: 0, reused: 1, reEmbedded: 0 });
+
+  const edited = { ...lesson, recommendation: "a materially different recommendation" };
+  assert.deepEqual(await adapter.indexLessons([edited]), { embedded: 0, reused: 0, reEmbedded: 1 });
+});

@@ -12,6 +12,7 @@
 import { reciprocalRankFusion, type RankedInput } from "./vendored/rank_fusion.ts";
 import { inferQueryIntent } from "./vendored/intent.ts";
 import { scoreLexical } from "./lexical.ts";
+import { byScoreThenId } from "./embedded.ts";
 import type { RelevanceAdapter, RelevanceQuery, ScoredLesson } from "./adapter.ts";
 import type { Lesson } from "../core/types.ts";
 import { hasLexicalIndex, type LexicalIndex } from "../adapters/storage.ts";
@@ -64,7 +65,7 @@ export class DeterministicRelevanceAdapter implements RelevanceAdapter {
           return scored ? { id: lesson.id, score: scored.score, ...timing(lesson) } : null;
         })
         .filter((item): item is RankedInput => item !== null)
-        .sort((a, b) => b.score - a.score);
+        .sort(byScoreThenId);
     }
 
     /**
@@ -79,13 +80,21 @@ export class DeterministicRelevanceAdapter implements RelevanceAdapter {
           .filter((lesson) => (lesson.triggerTags ?? []).some((tag) => wanted.has(tag.toLowerCase())))
           .map((lesson) => ({ id: lesson.id, score: 1, sourceType: "architecture", ...timing(lesson) }));
 
-    /* recency alone, so a fresh lesson with weak text still surfaces */
-    const recency: RankedInput[] = [...candidates]
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-      .map((lesson) => ({ id: lesson.id, score: 1, ...timing(lesson) }));
-
+    /**
+     * The semantic slot is left EMPTY here, deliberately.
+     *
+     * An earlier version passed recency into it, which both double-counted
+     * recency -- the fusion already applies time decay to every candidate -- and
+     * made every packet cite a "cosine" score that was never computed. A
+     * deterministic adapter has no semantic signal, and saying so is the honest
+     * behaviour. Real cosine similarity lives in EmbeddedRelevanceAdapter.
+     *
+     * A consequence worth stating: a lesson with no lexical overlap and no tag
+     * match does not surface at all. That is correct. Surfacing it purely for
+     * being recent is noise, and noise is what erodes a bounded packet.
+     */
     const fused = reciprocalRankFusion(
-      recency,   // semantic slot: recency stands in when no vectors are present
+      [],        // no semantic signal without an embedding adapter
       lexical,
       exact,
       intent,
@@ -94,14 +103,36 @@ export class DeterministicRelevanceAdapter implements RelevanceAdapter {
       referenceTime,
     );
 
+    const exactIds = new Set(exact.map((item) => item.id));
+    const usedBm25 = usable.length > 0;
+
     const out: ScoredLesson[] = [];
     for (const candidate of fused) {
       const lesson = byId.get(candidate.id);
       if (!lesson) continue;
+
+      /**
+       * The reason is rebuilt here rather than taken from the fusion helper.
+       * That helper labels its first list "semantic (cosine ...)", but this
+       * adapter passes RECENCY into that slot -- there is no vector signal at
+       * all. Reporting a cosine score that was never computed would make every
+       * citation in the packet untrue.
+       */
+      const parts: string[] = [];
+      if (exactIds.has(candidate.id)) parts.push("exact trigger-tag match");
+      if (candidate.lexicalScore !== undefined) {
+        parts.push(`${usedBm25 ? "BM25" : "lexical"} ${candidate.lexicalScore.toFixed(3)}`);
+      }
+      if (candidate.decayMultiplier !== undefined) {
+        parts.push(`recency ${candidate.decayMultiplier.toFixed(2)}`);
+      }
+      if (lesson.reuseCount > 0) parts.push(`reused ${lesson.reuseCount}x`);
+      parts.push(`domain ${lesson.domain}`);
+
       out.push({
         lesson,
         score: candidate.finalScore,
-        reason: candidate.reason,
+        reason: parts.join(", "),
         signals: {
           ...(candidate.lexicalScore === undefined ? {} : { lexical: candidate.lexicalScore }),
           ...(candidate.decayMultiplier === undefined ? {} : { recency: candidate.decayMultiplier }),

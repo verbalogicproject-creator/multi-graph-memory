@@ -17,6 +17,8 @@ import { renderPacket } from "../core/packet.ts";
 import { isGraphMemoryError } from "../core/errors.ts";
 import { projectDocuments } from "../docs/projector.ts";
 import { ingestAuthoredDocument } from "../docs/ingest.ts";
+import { ControlStore } from "../control/registry.ts";
+import { federatedQuery } from "../control/federation.ts";
 import { ensureClusterDir, loadConfig, type CliConfig } from "./config.ts";
 import { flagList, flagString, parseArgs, type ParsedArgs } from "./args.ts";
 import type { LessonDomain, LessonStatus } from "../core/types.ts";
@@ -26,6 +28,8 @@ fractal-memory — governed episodic and lesson memory
 
   fractal-memory                              interactive session
   fractal-memory project status
+  fractal-memory project register                          add this cluster to the control tier
+  fractal-memory admit --workspace W --by NAME --purpose T [--projects a,b]
   fractal-memory ask "<question>" [scope] [--component X] [--bug TAG] [--domain D] [--json]
   fractal-memory lesson list [--status S] [--domain D]
   fractal-memory lesson show <lessonId>
@@ -52,6 +56,8 @@ export interface RunContext {
   config: CliConfig;
   memory: GraphMemory;
   storage: SqliteStorageAdapter;
+  /** Layer 2. Opened lazily so a purely local command never creates it. */
+  openControl(): ControlStore;
 }
 
 export function openMemory(overrides: Partial<CliConfig> = {}): RunContext {
@@ -63,7 +69,20 @@ export function openMemory(overrides: Partial<CliConfig> = {}): RunContext {
     storage,
     scope: { workspace: config.workspace, projectId: config.projectId },
   });
-  return { config, memory, storage };
+
+  let control: ControlStore | null = null;
+  return {
+    config,
+    memory,
+    storage,
+    openControl(): ControlStore {
+      if (!control) {
+        control = new ControlStore(config.controlDatabasePath);
+        control.open();
+      }
+      return control;
+    },
+  };
 }
 
 function out(value: unknown, asJson: boolean): string {
@@ -76,10 +95,45 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
   const asJson = args.flags.json === true;
 
   if (args.scope.kind === "workspace") {
-    return "Cross-workspace reads require a federation admission record (approver, purpose, allowed workspaces). Record one with `fractal-memory admit`, which is not yet available in this build.";
+    const task = args.positional.join(" ").trim();
+    if (args.command !== "ask" || !task) {
+      return "Cross-workspace scope applies to `ask`. Usage: fractal-memory ask \"<question>\" @workspace:<name>";
+    }
+    const result = await federatedQuery(context.openControl(), args.scope.name ?? "", { task });
+    if (asJson) return out(result, true);
+
+    const lines = [
+      `Federated read across workspace "${args.scope.name}"`,
+      `  admitted by ${result.admission.approvedBy} — ${result.admission.purpose}`,
+      `  consulted: ${result.consulted.join(", ") || "none"}`,
+    ];
+    for (const skipped of result.refused) lines.push(`  skipped ${skipped.projectId}: ${skipped.reason}`);
+    for (const entry of result.packets) {
+      lines.push("", `--- ${entry.projectId} ---`, renderPacket(entry.packet));
+    }
+    return lines.join("\n");
   }
+
   if (args.scope.kind === "global") {
-    return "The control tier is addressed with @global. It holds only de-identified generalized lessons and pointers; project content never moves there.";
+    const control = context.openControl();
+    const generalized = control.listGeneralizedLessons();
+    const projects = control.listProjects();
+    if (asJson) return out({ projects, generalized, admissions: control.listAdmissions() }, true);
+
+    const lines = [
+      `Control tier — ${context.config.controlDatabasePath}`,
+      `  registered projects: ${projects.length}`,
+      `  generalized lessons: ${generalized.length}`,
+      `  admissions:          ${control.listAdmissions().length}`,
+      "",
+      "The control tier holds de-identified generalized lessons and pointers only.",
+      "Project content never moves here.",
+    ];
+    for (const lesson of generalized) {
+      lines.push("", `  ${lesson.trigger}`, `    ${lesson.recommendation}`,
+        `    projects: ${lesson.sourceProjects.join(", ")} · approved by ${lesson.approvedBy}`);
+    }
+    return lines.join("\n");
   }
 
   switch (args.command) {
@@ -87,7 +141,43 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
     case "help":
       return HELP;
 
+    case "admit": {
+      const workspace = flagString(args.flags, "workspace");
+      const by = flagString(args.flags, "by");
+      const purpose = flagString(args.flags, "purpose");
+      if (!workspace || !by || !purpose) {
+        return "Usage: fractal-memory admit --workspace <name> --by <approver> --purpose <text> [--projects a,b]";
+      }
+      const admission = {
+        approvedBy: by,
+        purpose,
+        allowedWorkspaces: [workspace],
+        ...(flagList(args.flags, "projects") === undefined ? {} : { allowedProjects: flagList(args.flags, "projects")! }),
+        admittedAt: new Date().toISOString(),
+      };
+      context.openControl().putAdmission(workspace, admission);
+      return [
+        `Recorded a federation admission for workspace "${workspace}".`,
+        `  approver ${by}`,
+        `  purpose  ${purpose}`,
+        admission.allowedProjects ? `  projects ${admission.allowedProjects.join(", ")}` : "  projects (all in workspace)",
+        "",
+        "This is retrieval policy and provenance. It grants no authority.",
+      ].join("\n");
+    }
+
     case "project": {
+      if (args.sub === "register") {
+        context.openControl().registerProject({
+          projectId: memory.scope.projectId,
+          workspace: memory.scope.workspace,
+          databasePath: context.config.databasePath,
+          schemaVersion: context.storage.getSchemaVersion(),
+          registeredAt: new Date().toISOString(),
+          lastSeenAt: new Date().toISOString(),
+        });
+        return `Registered ${memory.scope.workspace}/${memory.scope.projectId} in the control tier.\n  pointer only — no project content is copied.`;
+      }
       const counts = {
         events: memory.queryEvents().length,
         episodes: memory.listEpisodes().length,

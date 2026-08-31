@@ -36,6 +36,7 @@ import {
   type RecordDeviationInput,
 } from "./core/deviation.ts";
 import { assemblePacket, lessonToCitedItem } from "./core/packet.ts";
+import { DIRECTION_BARRED_DOMAINS } from "./core/types.ts";
 import { exportProject, importBundle, type ImportOptions, type ImportResult } from "./core/portability.ts";
 import { requireScope } from "./core/scope.ts";
 import { DeterministicRelevanceAdapter } from "./relevance/deterministic.ts";
@@ -198,11 +199,28 @@ export class GraphMemory {
   async queryContext(request: ContextRequest): Promise<ContextPacket> {
     const now = request.now ?? new Date();
 
-    const candidates = this.listLessons({
+    const all = this.listLessons({
       statuses: INJECTABLE_STATUSES,
       ...(request.domain === undefined ? {} : { domain: request.domain }),
       ...(request.component === undefined ? {} : { component: request.component }),
     });
+
+    /**
+     * Ruling 8: the direction bar is applied to the CANDIDATE SET, before
+     * ranking -- not merely to whatever the relevance layer happened to surface.
+     *
+     * Filtering only at the packet stage would make the exclusion depend on
+     * retrieval: if relevance returned nothing, nothing would be barred, and the
+     * guarantee would quietly hold by luck rather than by construction. Taste
+     * lessons must be excluded from a direction turn whether or not they would
+     * have ranked. The packet applies the same bar again as defence in depth.
+     */
+    const barred = request.directionGeneration
+      ? all.filter((lesson) => DIRECTION_BARRED_DOMAINS.includes(lesson.domain))
+      : [];
+    const candidates = request.directionGeneration
+      ? all.filter((lesson) => !DIRECTION_BARRED_DOMAINS.includes(lesson.domain))
+      : all;
 
     const ranked = await this.relevance.rank(candidates, {
       projectId: this.scope.projectId,
@@ -219,7 +237,7 @@ export class GraphMemory {
       return { ...cited, score: cited.score * (1 + scored.score), reason: scored.reason };
     });
 
-    return assemblePacket(items, {
+    const packet = assemblePacket(items, {
       scope: this.scope,
       task: request.task,
       ...(request.maxItems === undefined ? {} : { maxItems: request.maxItems }),
@@ -227,6 +245,22 @@ export class GraphMemory {
       sourceEpisodeOf: (item) => sourceEpisodes.get(item.id) || undefined,
       now,
     });
+
+    if (barred.length === 0) return packet;
+
+    // Report what the candidate-stage bar removed, so the omission notice stays truthful.
+    const dropped = packet.omissions.droppedForDirectionBar + barred.length;
+    return {
+      ...packet,
+      omissions: {
+        ...packet.omissions,
+        consideredCount: packet.omissions.consideredCount + barred.length,
+        droppedForDirectionBar: dropped,
+        note:
+          `${dropped} candidate(s) barred from direction generation; ` +
+          packet.omissions.note.replace(/^All candidates returned\.$/, "the rest were returned."),
+      },
+    };
   }
 }
 

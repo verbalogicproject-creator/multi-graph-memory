@@ -17,6 +17,8 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Episode, Evidence, Lesson, MemoryEvent } from "../core/types.ts";
 import type { EventQuery, LessonQuery, LexicalHit, LexicalIndex, StorageAdapter, StorageTx } from "./storage.ts";
 import { byOccurredAtDesc, byOpenedAtDesc, byRecordedAtDesc, byUpdatedAtDesc, eventMatches, lessonMatches } from "./filters.ts";
@@ -410,6 +412,10 @@ export class SqliteStorageAdapter implements StorageAdapter, LexicalIndex {
 
   open(): void {
     if (this.db) return;
+    // A first run should not fail because the cluster directory is absent.
+    if (this.path !== ":memory:" && !this.path.startsWith("file:")) {
+      mkdirSync(dirname(this.path), { recursive: true });
+    }
     this.db = new DatabaseSync(this.path);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");

@@ -4,3 +4,4 @@ export * from "./memory.ts";
 export * from "./sqlite.ts";
 export * from "./indexeddb.ts";
 export * from "./outbox.ts";
+export * from "./sqlite-vectors.ts";

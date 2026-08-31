@@ -43,13 +43,14 @@ test("an exact trigger-tag match outranks mere prose overlap", async () => {
   assert.equal(ranked[0]?.lesson.id, "tagged");
 });
 
-test("a fresher lesson outranks a stale one, all else equal", async () => {
+test("among lessons that DO match, the fresher one outranks the stale one", async () => {
   const adapter = new DeterministicRelevanceAdapter({ now: () => NOW });
-  const fresh = lesson("fresh", { updatedAt: "2026-08-30T00:00:00.000Z" });
-  const stale = lesson("stale", { updatedAt: "2026-01-01T00:00:00.000Z" });
+  const fresh = lesson("fresh", { updatedAt: "2026-08-30T00:00:00.000Z", trigger: "build failure here" });
+  const stale = lesson("stale", { updatedAt: "2026-01-01T00:00:00.000Z", trigger: "build failure here" });
 
-  const ranked = await adapter.rank([stale, fresh], { projectId: "p", task: "recommendation" });
-  assert.equal(ranked[0]?.lesson.id, "fresh");
+  const ranked = await adapter.rank([stale, fresh], { projectId: "p", task: "build failure" });
+  assert.equal(ranked.length, 2, "both match lexically");
+  assert.equal(ranked[0]?.lesson.id, "fresh", "recency decay breaks the tie");
 });
 
 test("ranking is deterministic and total: repeated runs agree exactly", async () => {
@@ -62,11 +63,33 @@ test("ranking is deterministic and total: repeated runs agree exactly", async ()
 
 test("the adapter never mutates a lesson or changes its status", async () => {
   const adapter = new DeterministicRelevanceAdapter({ now: () => NOW });
-  const original = lesson("l1", { status: "proposed" });
+  const original = lesson("l1", { status: "proposed", trigger: "widget assembly fails" });
   const snapshot = JSON.stringify(original);
-  const ranked = await adapter.rank([original], { projectId: "p", task: "anything" });
+  const ranked = await adapter.rank([original], { projectId: "p", task: "widget assembly" });
   assert.equal(JSON.stringify(original), snapshot);
   assert.equal(ranked[0]?.lesson.status, "proposed", "relevance cannot promote");
+});
+
+test("with no signal, the deterministic adapter returns nothing rather than inventing one", async () => {
+  const adapter = new DeterministicRelevanceAdapter({ now: () => NOW });
+  const unrelated = lesson("l1", { trigger: "database migration timing", recommendation: "run migrations first" });
+
+  const ranked = await adapter.rank([unrelated], { projectId: "p", task: "hero letter spacing" });
+
+  assert.deepEqual(ranked, [], "a merely recent lesson must not surface as a match");
+});
+
+test("the deterministic adapter never reports a cosine it did not compute", async () => {
+  const adapter = new DeterministicRelevanceAdapter({ now: () => NOW });
+  const ranked = await adapter.rank([lesson("l1", { trigger: "build failure" })], {
+    projectId: "p", task: "build failure",
+  });
+
+  assert.ok(ranked.length > 0);
+  for (const scored of ranked) {
+    assert.ok(!/cosine/.test(scored.reason), `reason must not claim a cosine: ${scored.reason}`);
+    assert.equal(scored.signals.semantic, undefined, "no semantic signal exists without an embedder");
+  }
 });
 
 test("an empty candidate set ranks to nothing", async () => {

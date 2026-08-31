@@ -124,6 +124,36 @@ test("the direction flag excludes taste lessons from the packet", async () => {
   }
 });
 
+test("Ruling 8: the direction bar is structural, not dependent on retrieval", async () => {
+  const { context, cleanup } = setup();
+  try {
+    const m = context.memory;
+    // A taste lesson sharing NO vocabulary with the query, so relevance would
+    // never surface it. The bar must still account for it, or the guarantee
+    // would hold only by luck.
+    const ep = m.openEpisode({ objective: "palette", baseRevisionId: "rev-1" });
+    m.closeEpisode(ep.id, "verified");
+    const ev = m.recordEvidence({ kind: "human.decision", ref: "decision://palette" });
+    const taste = m.proposeLesson({
+      trigger: "zzzz unrelated vocabulary", recommendation: "qqqq nothing in common",
+      scope: ["visual"], domain: "taste", sourceEpisodeIds: [ep.id], evidenceIds: [ev.id],
+    });
+    const ep2 = m.openEpisode({ objective: "palette again", baseRevisionId: "rev-2" });
+    m.recordAppliedLesson(ep2.id, taste.id);
+    m.closeEpisode(ep2.id, "verified");
+    m.recordReuse(taste.id, ep2.id, [ev.id]);
+    await run(`lesson approve ${taste.id} --by eyal`, context);
+
+    const packet = await m.queryContext({ task: "produce three design directions", directionGeneration: true });
+
+    assert.equal(packet.items.length, 0);
+    assert.equal(packet.omissions.droppedForDirectionBar, 1, "the bar must count it even though it would not have ranked");
+    assert.match(packet.omissions.note, /barred from direction generation/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("scope vocabulary is recognised", () => {
   assert.deepEqual(parseArgs(["ask", "x", "@local"]).scope, { kind: "local" });
   assert.deepEqual(parseArgs(["ask", "x", "@global"]).scope, { kind: "global" });
@@ -134,8 +164,21 @@ test("scope vocabulary is recognised", () => {
 test("a cross-workspace read is refused without an admission record", async () => {
   const { context, cleanup } = setup();
   try {
-    const result = await run("ask anything @workspace:other", context);
-    assert.match(result, /require a federation admission record/);
+    // A typed refusal, not a polite string: the CLI surfaces it through
+    // formatError so the operator sees the code.
+    await assert.rejects(
+      () => run("ask anything @workspace:other", context),
+      (e: unknown) => e instanceof GraphMemoryError && e.code === "FEDERATION_NOT_ADMITTED",
+    );
+
+    let rendered = "";
+    try {
+      await run("ask anything @workspace:other", context);
+    } catch (error) {
+      rendered = formatError(error);
+    }
+    assert.match(rendered, /^Refused \[FEDERATION_NOT_ADMITTED\]/);
+    assert.match(rendered, /fractal-memory admit/);
   } finally {
     cleanup();
   }
