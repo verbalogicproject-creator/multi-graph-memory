@@ -123,3 +123,25 @@ export interface ProjectionAdapter {
   putProjectedEvent(event: MemoryEvent): Promise<void>;
   listProjectedEvents(query: EventQuery): Promise<MemoryEvent[]>;
 }
+
+/**
+ * Optional capability: a real full-text index.
+ *
+ * The SQLite adapter implements it; the in-memory and IndexedDB adapters do not,
+ * and the relevance layer falls back to deterministic scanning when it is absent.
+ * Ruling 4 requires the projection to stay useful without it.
+ */
+export interface LexicalIndex {
+  /** BM25-ranked lesson ids, best first. Returns [] when the index is unavailable. */
+  searchLessons(projectId: string, query: string, limit: number): LexicalHit[];
+}
+
+export interface LexicalHit {
+  lessonId: string;
+  /** Normalized to 0..1, higher is better. */
+  score: number;
+}
+
+export function hasLexicalIndex(value: unknown): value is LexicalIndex {
+  return typeof (value as LexicalIndex | null)?.searchLessons === "function";
+}
