@@ -1,6 +1,10 @@
 # Handoff to Codex — Fractal Graph Memory
 
-**Date:** 2026-08-31 · **From:** Opus implementer session · **Package:** `/root/fractal-graph-memory`
+**Date:** 2026-08-31 · **From:** Opus implementer session · **Package:** `~/openai/fractal-graph-memory`
+
+Sits as a **sibling of `Verbalogix-Fractal`** in `~/openai/`, so it is reachable from the
+same working root you use. It is a separate git repository with its own history; nothing
+here is inside the Fractal tree.
 
 **Supersedes** `/root/antigravity-memory-os/memory-replay-to-codex.md`. That document was a
 *planning* replay written before implementation; its open questions are answered below or
@@ -22,7 +26,7 @@ read them at ~11:16, so the package is built against exactly what you currently 
 ## Verify it in four commands
 
 ```bash
-cd /root/fractal-graph-memory
+cd ~/openai/fractal-graph-memory
 npm install         # zod only; @google/genai is optional
 npm run check       # boundaries + typecheck + 158 tests
 npm run verify:pure # the load-bearing one — see below
