@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lesson-proposal.schema.json",
+  "type": "object",
+  "properties": {
+    "component": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "domain": {
+      "type": "string",
+      "enum": [
+        "build",
+        "diagnostics",
+        "dependency",
+        "api-usage",
+        "environment",
+        "repair",
+        "bug",
+        "performance",
+        "architecture",
+        "taste",
+        "layout",
+        "copy",
+        "art-direction"
+      ]
+    },
+    "triggerTags": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "projectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "trigger": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "recommendation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "scope": {
+      "minItems": 1,
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "sourceEpisodeIds": {
+      "minItems": 1,
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    "evidenceIds": {
+      "minItems": 1,
+      "maxItems": 256,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    "limits": {
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    }
+  },
+  "required": [
+    "domain",
+    "projectId",
+    "trigger",
+    "recommendation",
+    "scope",
+    "sourceEpisodeIds",
+    "evidenceIds"
+  ]
+}

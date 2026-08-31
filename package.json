@@ -1,0 +1,44 @@
+{
+  "name": "fractal-graph-memory",
+  "version": "0.1.0",
+  "description": "Governed episodic and lesson memory for Verbalogix Fractal. Local-first, offline-pure core with an injected relevance layer.",
+  "license": "MIT",
+  "author": "Eyal Nof <verbalogic.project@gmail.com>",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "fractal-memory": "./bin/fractal-memory.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core/index.ts",
+    "./adapters": "./src/adapters/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "check:boundaries": "node tooling/check-boundaries.mjs",
+    "check": "npm run check:boundaries && npm run typecheck && npm test",
+    "verify:pure": "node tooling/verify-pure.mjs",
+    "schemas": "node tooling/emit-schemas.mjs",
+    "mcp": "node src/mcp/server.ts",
+    "memory": "node bin/fractal-memory.ts"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "optionalDependencies": {
+    "@google/genai": "^2.18.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "@types/node": "^22.13.4"
+  },
+  "allowScripts": {
+    "@google/genai": false,
+    "protobufjs": false
+  }
+}

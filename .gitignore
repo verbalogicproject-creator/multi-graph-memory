@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.memory/
+.fractal-memory/
+*.db
+*.db-shm
+*.db-wal
+.env*
+!.env.example
