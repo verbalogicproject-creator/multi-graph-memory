@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HELP, openMemory, runCommand, formatError } from "../src/cli/multi-memory.ts";
@@ -351,5 +351,75 @@ test("attribution keeps event and episode attribution as separate axes", async (
 test("the help text advertises every attribution surface it implements", () => {
   for (const fragment of ["events", "--provider", "--model", "--surface", "attribution"]) {
     assert.ok(HELP.includes(fragment), `HELP must mention ${fragment}`);
+  }
+});
+
+/* ------------------------------------------------ pointing at a cluster -- */
+
+test("a database can be named directly, and its project read from its contents", async () => {
+  const { context, dir, cleanup } = setup();
+  try {
+    seedAttributed(context);
+    const backup = join(dir, "renamed-copy.db");
+    context.storage.backupTo(backup);
+
+    // Named by FILE, with a filename that matches no project inside it. Guessing
+    // the project from the filename would silently show an empty database.
+    const viewer = openMemory({ databasePath: backup }, { inferProjectId: true });
+    try {
+      assert.equal(viewer.memory.scope.projectId, "cli-demo", "the id comes from the contents");
+      assert.equal(viewer.memory.listEpisodes().length, 2, "and the records are visible");
+    } finally {
+      viewer.storage.close();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("a backup taken while the store is open is complete, not a stale snapshot", async () => {
+  const { context, dir, cleanup } = setup();
+  try {
+    const { lessonId } = seed(context);
+    // Written after the file exists, so it is exactly the kind of recent commit
+    // that lives in the -wal and that a plain `cp` of the .db would miss.
+    await run(`lesson approve ${lessonId} --by eyal`, context);
+
+    const backup = join(dir, "backup.db");
+    context.storage.backupTo(backup);
+
+    const restored = openMemory({ databasePath: backup }, { inferProjectId: true });
+    try {
+      assert.equal(restored.memory.getLesson(lessonId)?.status, "approved", "the approval is in the backup");
+    } finally {
+      restored.storage.close();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("prune refuses without an age, and dry-runs by default", async () => {
+  const { context, cleanup } = setup();
+  try {
+    // Deleting memory is not reversible, so it takes an explicit boundary...
+    assert.match(await run("prune", context), /Refusing to prune without an age/);
+
+    // ...and even then, saying nothing extra means "show me", not "do it".
+    const cluster = context.config.clusterDir;
+    mkdirSync(cluster, { recursive: true });
+    const doomed = join(cluster, "old-build.db");
+    writeFileSync(doomed, "");
+
+    const dry = await run("prune --older-than 0", context);
+    assert.match(dry, /Dry run/);
+    assert.match(dry, /old-build/);
+    assert.equal(existsSync(doomed), true, "a dry run deletes nothing");
+
+    const applied = await run("prune --older-than 0 --apply", context);
+    assert.match(applied, /^Removed 1 database/);
+    assert.equal(existsSync(doomed), false, "--apply is what deletes");
+  } finally {
+    cleanup();
   }
 });

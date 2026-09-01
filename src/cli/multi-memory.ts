@@ -10,7 +10,8 @@
  */
 
 import readline from "node:readline/promises";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { SqliteStorageAdapter } from "../adapters/sqlite.ts";
 import { GraphMemory } from "../port.ts";
 import { renderPacket } from "../core/packet.ts";
@@ -46,7 +47,15 @@ multi-memory — governed episodic and lesson memory
   multi-memory graph export <file.html|file.json>       3D graph, or nodes+edges
   multi-memory sync export <file>
   multi-memory sync import <file>
+  multi-memory backup <file.db>                         consistent copy, safe while running
+  multi-memory builds [--older-than <days>]             clusters under MULTI_MEMORY_BUILDS
+  multi-memory prune --older-than <days> [--apply]      dry run unless --apply
   multi-memory doctor
+
+Pointing at a cluster (otherwise: the .multi-memory.json where you run):
+  --build <id>              a build, resolved under MULTI_MEMORY_BUILDS
+  --database <path>         an explicit .db file
+  --workspace <name>        override the workspace
 
 Scope vocabulary:
   @local | @current            the active project (default)
@@ -65,11 +74,30 @@ export interface RunContext {
   openControl(): ControlStore;
 }
 
-export function openMemory(overrides: Partial<CliConfig> = {}): RunContext {
-  const config = loadConfig(overrides);
+export interface OpenMemoryOptions {
+  /**
+   * Take the project id from the database's own contents when it holds exactly
+   * one. Used when the caller named a FILE rather than a project, because the
+   * filename is not evidence of what is inside it.
+   */
+  inferProjectId?: boolean;
+}
+
+export function openMemory(overrides: Partial<CliConfig> = {}, options: OpenMemoryOptions = {}): RunContext {
+  let config = loadConfig(overrides);
   ensureClusterDir(config);
   const storage = new SqliteStorageAdapter({ path: config.databasePath });
   storage.open();
+
+  if (options.inferProjectId) {
+    const present = [...new Set(storage.distinctProjectIds())];
+    // Exactly one, or leave the caller's guess alone: with several, picking one
+    // would silently hide the others.
+    if (present.length === 1 && present[0] !== config.projectId) {
+      config = { ...config, projectId: present[0]! };
+    }
+  }
+
   const memory = new GraphMemory({
     storage,
     scope: { workspace: config.workspace, projectId: config.projectId },
@@ -452,6 +480,95 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
       return "Usage: multi-memory sync export|import <file>";
     }
 
+    /** A copy that is safe to take while the server holds the store open. */
+    case "backup": {
+      const file = args.positional[0];
+      if (!file) return "Usage: multi-memory backup <file.db>";
+      const target = resolve(file);
+      context.storage.backupTo(target);
+      const size = statSync(target).size;
+      return [
+        `wrote ${target}`,
+        `  ${(size / 1024).toFixed(1)} KiB, consistent as of now`,
+        "  Taken through the WAL, so unlike `cp` it is not a stale snapshot.",
+      ].join("\n");
+    }
+
+    /**
+     * The clusters on disk. A host that keeps one database per build accumulates
+     * files nothing ever removes, and nothing else in this tool would tell you.
+     */
+    case "builds":
+    case "prune": {
+      const dir = process.env.MULTI_MEMORY_BUILDS ?? context.config.clusterDir;
+      const olderThanDays = Number(flagString(args.flags, "older-than") ?? NaN);
+      let entries: { name: string; path: string; sizeBytes: number; modified: string; ageDays: number }[];
+      try {
+        entries = readdirSync(dir)
+          .filter((name) => name.endsWith(".db"))
+          .map((name) => {
+            const full = join(dir, name);
+            const stat = statSync(full);
+            return {
+              name: name.replace(/\.db$/, ""),
+              path: full,
+              sizeBytes: stat.size,
+              modified: stat.mtime.toISOString(),
+              ageDays: (Date.now() - stat.mtimeMs) / 86_400_000,
+            };
+          })
+          .sort((a, b) => a.ageDays - b.ageDays);
+      } catch {
+        return `No cluster directory at ${dir}. Set MULTI_MEMORY_BUILDS to where the databases live.`;
+      }
+
+      const matching = Number.isFinite(olderThanDays)
+        ? entries.filter((e) => e.ageDays >= olderThanDays)
+        : entries;
+
+      if (args.command === "builds") {
+        if (asJson) return out(matching, true);
+        if (matching.length === 0) return `No databases in ${dir}.`;
+        const total = matching.reduce((sum, e) => sum + e.sizeBytes, 0);
+        return [
+          dir,
+          ...matching.map(
+            (e) =>
+              `  ${e.name.padEnd(30)} ${(e.sizeBytes / 1024).toFixed(0).padStart(7)} KiB  ${e.ageDays.toFixed(1).padStart(6)} days old`,
+          ),
+          `  ${String(matching.length).padStart(30)} database(s), ${(total / 1024 / 1024).toFixed(1)} MiB total`,
+        ].join("\n");
+      }
+
+      // prune
+      if (!Number.isFinite(olderThanDays)) {
+        return "Usage: multi-memory prune --older-than <days> [--apply]\nRefusing to prune without an age: deleting memory needs an explicit boundary.";
+      }
+      if (matching.length === 0) return `Nothing older than ${olderThanDays} day(s) in ${dir}.`;
+
+      const apply = args.flags["apply"] === true;
+      if (!apply) {
+        return [
+          `Would remove ${matching.length} database(s) older than ${olderThanDays} day(s):`,
+          ...matching.map((e) => `  ${e.name}  (${e.ageDays.toFixed(1)} days, ${(e.sizeBytes / 1024).toFixed(0)} KiB)`),
+          "",
+          "Dry run. Re-run with --apply to delete. Consider `backup` first — this is not reversible.",
+        ].join("\n");
+      }
+
+      const removed: string[] = [];
+      for (const entry of matching) {
+        // The companions go too, or SQLite will later find a -wal with no database.
+        for (const suffix of ["", "-wal", "-shm"]) {
+          try {
+            rmSync(`${entry.path}${suffix}`, { force: true });
+          } catch { /* already gone */ }
+        }
+        removed.push(entry.name);
+      }
+      return `Removed ${removed.length} database(s): ${removed.join(", ")}`;
+    }
+
     case "doctor": {
       const lessons = memory.listLessons();
       const contradicted = lessons.filter((l) => l.status === "contradicted");
@@ -540,9 +657,51 @@ export function formatError(error: unknown): string {
   return `Error: ${error instanceof Error ? error.message : String(error)}`;
 }
 
+/**
+ * Resolves `--build` / `--database` / `--workspace` into config overrides.
+ *
+ * Without these the only way to inspect a particular cluster was to create a
+ * directory containing a `.multi-memory.json` and run from inside it -- which
+ * made looking at a second build a file-editing exercise. A host that keeps one
+ * database per build (multi-app does) makes that the common case, not the rare one.
+ *
+ * `--build <id>` resolves against `MULTI_MEMORY_BUILDS` when set, so a host can
+ * name its cluster directory once and every later command is just the build id.
+ */
+export function overridesFromFlags(args: ParsedArgs): Partial<CliConfig> {
+  const overrides: Partial<CliConfig> = {};
+
+  const databasePath = flagString(args.flags, "database") ?? flagString(args.flags, "db");
+  const build = flagString(args.flags, "build");
+  const workspace = flagString(args.flags, "workspace");
+
+  if (workspace) overrides.workspace = workspace;
+
+  if (databasePath) {
+    overrides.databasePath = resolve(databasePath);
+    overrides.clusterDir = dirname(overrides.databasePath);
+    if (!build) overrides.projectId = basename(overrides.databasePath).replace(/\.db$/i, "");
+  }
+
+  if (build) {
+    overrides.projectId = build;
+    if (!databasePath) {
+      const dir = process.env.MULTI_MEMORY_BUILDS;
+      if (dir) {
+        overrides.clusterDir = resolve(dir);
+        overrides.databasePath = join(resolve(dir), `${build}.db`);
+      }
+    }
+  }
+
+  return overrides;
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
-  const context = openMemory();
+  const namedAFile = Boolean(flagString(args.flags, "database") ?? flagString(args.flags, "db"));
+  const namedAProject = Boolean(flagString(args.flags, "build"));
+  const context = openMemory(overridesFromFlags(args), { inferProjectId: namedAFile && !namedAProject });
 
   try {
     if (argv.length === 0) {

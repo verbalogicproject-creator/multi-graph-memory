@@ -543,6 +543,39 @@ export class SqliteStorageAdapter implements StorageAdapter, LexicalIndex {
     }
   }
 
+  /**
+   * A consistent single-file copy, safe to take while the store is in use.
+   *
+   * `cp` is not: WAL mode leaves recent commits in a `-wal` companion, so copying
+   * the `.db` alone silently yields a stale snapshot -- during development that
+   * lost an approval and an entire lesson. `VACUUM INTO` reads through the WAL
+   * inside a transaction and writes one already-checkpointed file.
+   */
+  /**
+   * The project ids actually present in this file.
+   *
+   * A caller pointed at an arbitrary `.db` cannot know what scope it holds, and
+   * guessing from the filename is wrong the moment a file is renamed or copied --
+   * a backup named `demo-1-backup.db` holds records scoped to `demo-1`, and a
+   * filename guess would quietly show an empty project.
+   */
+  distinctProjectIds(): string[] {
+    const rows = this.handle()
+      .prepare(
+        `SELECT project_id FROM episodes
+         UNION SELECT project_id FROM lessons
+         UNION SELECT project_id FROM events
+         UNION SELECT project_id FROM evidence`,
+      )
+      .all() as Row[];
+    return rows.map((row) => String(row.project_id)).filter(Boolean);
+  }
+
+  backupTo(destination: string): void {
+    mkdirSync(dirname(destination), { recursive: true });
+    this.handle().prepare("VACUUM INTO ?").run(destination);
+  }
+
   transact<T>(fn: (tx: StorageTx) => T): T {
     const db = this.handle();
 
