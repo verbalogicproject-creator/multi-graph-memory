@@ -1,7 +1,7 @@
-# Roadmap — after the Codex handoff
+# Roadmap — beyond the multi-app port
 
-**Not in scope for this return package.** Recorded here so the ideas are not lost and so
-Codex can see where the schema may need to stretch. Nothing below has been designed,
+**Not in scope for the current package.** Recorded here so the ideas are not lost and so
+it is visible where the schema may need to stretch. Nothing below has been designed,
 costed, or validated; both items need work before they are decisions.
 
 ## 1. Deployed multi-tenant MCP memory service

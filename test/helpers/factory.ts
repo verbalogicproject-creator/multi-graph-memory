@@ -10,7 +10,7 @@ import type { StorageAdapter } from "../../src/adapters/storage.ts";
 export const T0 = "2026-08-01T00:00:00.000Z";
 export const T1 = "2026-08-02T00:00:00.000Z";
 export const T2 = "2026-08-03T00:00:00.000Z";
-export const PROJECT = "fractal-demo";
+export const PROJECT = "builder-demo";
 
 export function makeStorage(): StorageAdapter {
   const storage = new MemoryStorageAdapter();

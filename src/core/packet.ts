@@ -14,7 +14,7 @@
  * citation, match reason, per-item truncation, a total budget, and an explicit
  * "showing N of M" omission line.
  *
- * If Fractal assembles this, governance is structural. If a model assembles its
+ * If the host assembles this, governance is structural. If a model assembles its
  * own query instead, governance is merely a suggestion -- which is why the
  * model-facing surface can only ask for a packet, never compose one.
  */
@@ -80,8 +80,8 @@ export interface AssembleOptions {
   maxItems?: number;
   maxChars?: number;
   /**
-   * Set when the turn generates Fractal's three design directions. Ruling 8 bars
-   * memory from that gate entirely.
+   * Set when the turn generates the builder's three art directions
+   * (`suggestArtDirections`). Ruling 8 bars memory from that gate entirely.
    */
   directionGeneration?: boolean;
   maxPerComponent?: number;

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { GraphMemoryError } from "../src/core/errors.ts";
 import { ControlStore } from "../src/control/registry.ts";
 import { federatedQuery } from "../src/control/federation.ts";
-import { openMemory, runCommand } from "../src/cli/fractal-memory.ts";
+import { openMemory, runCommand } from "../src/cli/multi-memory.ts";
 import { parseArgs } from "../src/cli/args.ts";
 
 function code(err: unknown): string | undefined {
@@ -17,7 +17,7 @@ function makeProject(root: string, projectId: string, workspace: string, trigger
   const dir = join(root, projectId);
   const context = openMemory({
     projectRoot: dir, projectId, workspace,
-    clusterDir: join(dir, ".fractal-memory"), databasePath: join(dir, "memory.db"),
+    clusterDir: join(dir, ".multi-memory"), databasePath: join(dir, "memory.db"),
     controlDatabasePath: join(root, "control.db"),
   });
   const m = context.memory;

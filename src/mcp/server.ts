@@ -11,8 +11,10 @@
  * require editing this file. A flag can be set wrongly; an absent capability
  * cannot.
  *
- * Ruling 10: this may be implemented and tested now, but must NOT be connected
- * to Fractal during Cycle 1.
+ * Ruling 10: a model-facing transport is the surface most likely to be pointed
+ * at a live host before anyone has decided what it may do there. Registering a
+ * mutation tool here would make that decision by default, so the decision is
+ * removed instead.
  */
 
 import readline from "node:readline";

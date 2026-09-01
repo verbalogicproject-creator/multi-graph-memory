@@ -62,7 +62,7 @@ const SECRET_RULES: SecretRule[] = [
 /**
  * Structurally forbidden members. The specification excludes raw provider traces
  * and hidden chain-of-thought explicitly; thought signatures are opaque provider
- * state that Fractal's own Gemini architecture already refuses to store.
+ * state, and the host's own provider boundary already refuses to persist it.
  */
 const FORBIDDEN_KEYS = new Set(
   [

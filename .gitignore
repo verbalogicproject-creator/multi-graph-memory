@@ -1,7 +1,7 @@
 node_modules/
 dist/
 .memory/
-.fractal-memory/
+.multi-memory/
 *.db
 *.db-shm
 *.db-wal

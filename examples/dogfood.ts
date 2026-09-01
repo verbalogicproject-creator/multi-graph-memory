@@ -16,7 +16,7 @@ import { projectDocuments } from "../src/docs/projector.ts";
 import { isGraphMemoryError } from "../src/core/errors.ts";
 
 const DIR = process.env.DOGFOOD_DIR ?? "/tmp/fgm-dogfood";
-const DB = join(DIR, "fractal-graph-memory.db");
+const DB = join(DIR, "build-demo.db");
 
 function ok(label: string, detail = ""): void {
   console.log(`  ✔ ${label}${detail ? ` — ${detail}` : ""}`);
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   rmSync(DIR, { recursive: true, force: true });
   const storage = new SqliteStorageAdapter({ path: DB });
   storage.open();
-  const memory = new GraphMemory({ storage, scope: { workspace: "verbalogix", projectId: "fractal-graph-memory" } });
+  const memory = new GraphMemory({ storage, scope: { workspace: "multi-app", projectId: "build-demo" } });
 
   console.log("\n1. Episode one — the redaction defect\n");
   const ep1 = memory.openEpisode({ objective: "Build the five-gate redaction boundary", baseRevisionId: "phase-1" });
@@ -186,7 +186,7 @@ async function main(): Promise<void> {
 
   const fresh = new SqliteStorageAdapter({ path: join(DIR, "reimported.db") });
   fresh.open();
-  const freshMemory = new GraphMemory({ storage: fresh, scope: { workspace: "verbalogix", projectId: "fractal-graph-memory" } });
+  const freshMemory = new GraphMemory({ storage: fresh, scope: { workspace: "multi-app", projectId: "build-demo" } });
   const imported = freshMemory.import(bundle);
   ok("re-imported into a fresh store", `${imported.imported.lessons} lessons, ${imported.imported.events} events`);
 

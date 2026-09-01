@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.2.0] — 2026-09-01
+
+Retargeted from Verbalogix Fractal to the multi-app builder, in place. The governance
+core, storage, relevance and surfaces are unchanged; what moved is who the host is.
+
+### Renamed
+- Package `fractal-graph-memory` → `multi-graph-memory`; CLI `fractal-memory` → `multi-memory`.
+- Cluster directory `.fractal-memory/` → `.multi-memory/`; config `.fractal-memory.json` → `.multi-memory.json`.
+- Environment `FRACTAL_MEMORY_HOME` → `MULTI_MEMORY_HOME`, `FRACTAL_WORKSPACE` → `MULTI_WORKSPACE`.
+- IndexedDB database `fractal-graph-memory-v1` → `multi-graph-memory-v1`; document generator id updated.
+
+### Retargeted
+- **Scope is the build, not the workspace.** One cluster per `SavedBuild`; the control tier
+  is what spans builds, and only with a recorded human approval.
+- **The direction bar binds to `suggestArtDirections`.** It was written against Fractal's
+  three design directions; multi-app's Theme step produces three art directions through the
+  same mechanism, so the bar transfers without weakening. Past builds may inform whether
+  something works; they may not decide what the next one looks like.
+- Event-kind mapping onto builder stages documented in the README. Seven of ten map onto
+  surfaces that already exist. The two that do not — `verification.completed` and
+  `repair.attempted` — are exactly the two that require observing a running application.
+- Provider-boundary note now cites multi-app's Express proxy, which is why its browser
+  never holds `GEMINI_API_KEY`.
+
+### Removed
+- `CODEX-COMPLETION-PROMPT.md`. It was a Fractal admission document — twelve rulings, a
+  compatibility request, an admission decision — and none of it survives the change of
+  host. Retained in git history at `3b3957e`.
+
+### Unchanged and re-verified
+- 158 tests pass, `check:boundaries` and `typecheck` green, `verify:pure` green.
+- No file in `/root/multi-app` was modified. The integration is specified, not wired.
+
 ## [0.1.0] — 2026-08-31
 
 First return package for Codex. Not released, not published, no remote configured.

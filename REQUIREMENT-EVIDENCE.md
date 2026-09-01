@@ -49,7 +49,7 @@ that proves it. Run `npm run check` to reproduce (158 tests).
 | Queries return citations, scope, freshness, omission limits | `packet.*.test.ts` | ✅ |
 | Memory grants no filesystem/dependency/donor/model/network/revision/deployment authority | `core/errors.ts` `refuseAuthority`; `authority: "context_only"` on every packet | `mcp.readonly.test.ts` "authority boundary" | ✅ |
 | Project revisions and the System Design Contract remain stronger truth | stated in every packet's advisory line | `packet.creativity.test.ts` | ✅ |
-| No framework UI, no network calls, no Gemini/SAG/React/Fractal-internal dependency in the core | `tooling/check-boundaries.mjs` | `npm run verify:pure` | ✅ |
+| No framework UI, no network calls, no Gemini/SAG/React/host-internal dependency in the core | `tooling/check-boundaries.mjs` | `npm run verify:pure` | ✅ |
 
 ## C. Owner rulings
 
@@ -81,7 +81,7 @@ that proves it. Run `npm run check` to reproduce (158 tests).
 | 9 — library port, context-read port, human CLI, read-only MCP | `port.ts`, `cli/*`, `mcp/server.ts` | `cli.surface.test.ts`, `mcp.readonly.test.ts` | ✅ |
 | 9 — MCP exposes no approval/revocation/admission/re-homing | `mcp/server.ts` | `mcp.readonly.test.ts` (3 cases incl. a source scan) | ✅ |
 | 9 — approval structurally unreachable from model surfaces | `port.ts` `ModelContextPort` | `mcp.readonly.test.ts` "exactly one method" | ✅ |
-| 10 — Cycle 2 boundary unchanged; MCP not connected to Fractal | no Fractal file touched; no Fractal endpoint added | `git -C ~/openai/Verbalogix-Fractal status` clean of this work | ✅ |
+| 10 — MCP implemented but not connected to a host | no host file touched; no host endpoint added | `git -C /root/multi-app status` clean of this work | ✅ |
 | 11 — approved document names; authored vs generated ownership | `docs/projector.ts` | `docs.frontmatter.test.ts` | ✅ |
 | 11 — checksummed frontmatter; hand edit refused and reported | `docs/frontmatter.ts` | `docs.frontmatter.test.ts` | ✅ |
 | 12 — reuse is external base, not admission; inventory required | `PROVENANCE.md` | this document | ✅ |
@@ -93,4 +93,4 @@ that proves it. Run `npm run check` to reproduce (158 tests).
 3. **Live provider coverage is minimal by design.** Three live tests, four API calls, skipped without `GEMINI_API_KEY`. They confirm dimensions, auto-normalization and asymmetric retrieval ordering. Rate limits, quota behaviour, batch embedding and multimodal input are not exercised.
 4. **Control-tier promotion has no CLI verb.** `@global` reports the tier and `admit` records an admission, but `promoteToControlTier` remains library-only. Deliberate: promotion requires a written no-proprietary-content rationale, and a flag-driven command is the wrong shape for a judgement that must be argued rather than asserted.
 5. **Upstream fix left uncommitted.** `/root/antigravity-memory-os/src/vector/providers/gemini.ts` is patched and verified live, but not committed — that repository's history was not this session's to write.
-6. **No Fractal compatibility claim.** Nothing here has been run against the Fractal repository. Per the implementer prompt, no such claim is permissible until compatibility tests run there.
+6. **No multi-app compatibility claim.** Nothing here has been run against `/root/multi-app`. The event mapping in the README is a specification of how the two would meet, not evidence that they have. No such claim is permissible until integration tests run against the host.

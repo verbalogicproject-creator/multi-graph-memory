@@ -1,7 +1,7 @@
 {
-  "name": "fractal-graph-memory",
-  "version": "0.1.0",
-  "description": "Governed episodic and lesson memory for Verbalogix Fractal. Local-first, offline-pure core with an injected relevance layer.",
+  "name": "multi-graph-memory",
+  "version": "0.2.0",
+  "description": "Governed episodic and lesson memory for the multi-app builder. One cluster per build. Local-first, offline-pure core with an injected relevance layer.",
   "license": "MIT",
   "author": "Eyal Nof <verbalogic.project@gmail.com>",
   "type": "module",
@@ -10,7 +10,7 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "fractal-memory": "./bin/fractal-memory.ts"
+    "multi-memory": "./bin/multi-memory.ts"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -25,7 +25,7 @@
     "verify:pure": "node tooling/verify-pure.mjs",
     "schemas": "node tooling/emit-schemas.mjs",
     "mcp": "node src/mcp/server.ts",
-    "memory": "node bin/fractal-memory.ts"
+    "memory": "node bin/multi-memory.ts"
   },
   "dependencies": {
     "zod": "^3.24.1"

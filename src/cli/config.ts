@@ -1,7 +1,7 @@
 /**
  * CLI configuration and cluster layout.
  *
- * Layer 1 -- one SQLite file per project, under .fractal-memory/ in the project
+ * Layer 1 -- one SQLite file per project, under .multi-memory/ in the project
  * root. Layer 2 (the control tier) lives separately in the user's home.
  */
 
@@ -18,7 +18,7 @@ export interface CliConfig {
   controlDatabasePath: string;
 }
 
-export const CONFIG_FILE = ".fractal-memory.json";
+export const CONFIG_FILE = ".multi-memory.json";
 
 export function findProjectRoot(startDir = process.cwd()): string {
   let current = resolve(startDir);
@@ -50,8 +50,8 @@ export function loadConfig(overrides: Partial<CliConfig> = {}, startDir = proces
   }
 
   const projectId = overrides.projectId ?? fileConfig.projectId ?? basename(projectRoot);
-  const workspace = overrides.workspace ?? fileConfig.workspace ?? process.env.FRACTAL_WORKSPACE ?? "default";
-  const clusterDir = overrides.clusterDir ?? fileConfig.clusterDir ?? join(projectRoot, ".fractal-memory");
+  const workspace = overrides.workspace ?? fileConfig.workspace ?? process.env.MULTI_WORKSPACE ?? "default";
+  const clusterDir = overrides.clusterDir ?? fileConfig.clusterDir ?? join(projectRoot, ".multi-memory");
 
   return {
     workspace,
@@ -62,7 +62,7 @@ export function loadConfig(overrides: Partial<CliConfig> = {}, startDir = proces
     controlDatabasePath:
       overrides.controlDatabasePath ??
       fileConfig.controlDatabasePath ??
-      join(process.env.FRACTAL_MEMORY_HOME ?? join(homedir(), ".fractal-memory"), "control.db"),
+      join(process.env.MULTI_MEMORY_HOME ?? join(homedir(), ".multi-memory"), "control.db"),
   };
 }
 

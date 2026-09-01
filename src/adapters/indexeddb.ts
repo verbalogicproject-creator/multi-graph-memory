@@ -48,7 +48,7 @@ export class IndexedDBProjectionAdapter implements ProjectionAdapter {
   private db: any = null;
 
   constructor(options: IndexedDBOptions) {
-    this.databaseName = options.databaseName ?? "fractal-graph-memory-v1";
+    this.databaseName = options.databaseName ?? "multi-graph-memory-v1";
     this.factory = options.factory;
   }
 

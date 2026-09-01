@@ -1,8 +1,8 @@
 # Provenance and dependency inventory
 
 Ruling 12: reuse of existing code is an *external implementation base*, not donor
-admission into Fractal. Nothing in this package has been copied into
-`~/openai/Verbalogix-Fractal`, and this package makes no Fractal integration claim.
+admission into the host. Nothing in this package has been copied into
+`/root/multi-app`, and this package makes no claim of being integrated with it.
 
 ## Origin repositories
 
@@ -57,8 +57,8 @@ package are used: `node:test`, `node:sqlite`, `node:readline` and Node's native
 TypeScript type-stripping cover all four, so the runtime dependency surface is
 exactly one package.
 
-`allowScripts` mirrors Fractal's posture: install scripts are disabled for
-`@google/genai` and `protobufjs`.
+`allowScripts` keeps the posture this component was written with: install scripts are
+disabled for `@google/genai` and `protobufjs`.
 
 ## Known gaps
 

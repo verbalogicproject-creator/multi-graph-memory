@@ -77,8 +77,11 @@ export const LOW_WEIGHT_DOMAINS: readonly LessonDomain[] = [
 
 /**
  * Ruling 8: memory is structurally barred from generating, filtering, ranking or
- * selecting Fractal's three design directions. `taste` is named explicitly in the
- * ruling; the remaining art-direction domains are barred on the same reasoning.
+ * selecting the builder's three art directions -- the trio produced by
+ * `suggestArtDirections` and rendered by the Theme step. `taste` is named
+ * explicitly in the ruling; the remaining art-direction domains are barred on
+ * the same reasoning. Past builds may inform correctness; they may not decide
+ * what the next one is allowed to look like.
  */
 export const DIRECTION_BARRED_DOMAINS: readonly LessonDomain[] = LOW_WEIGHT_DOMAINS;
 
@@ -253,7 +256,7 @@ export interface CitedItem {
 
 /**
  * The governed artifact. Bounded, cited, budgeted, and carrying its own omissions.
- * Assembled by Fractal -- never by a model choosing its own query.
+ * Assembled by the host builder -- never by a model choosing its own query.
  */
 export interface ContextPacket {
   scope: ProjectScope;

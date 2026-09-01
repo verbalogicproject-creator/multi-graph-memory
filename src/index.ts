@@ -1,10 +1,14 @@
 /**
- * fractal-graph-memory — public surface.
+ * multi-graph-memory — public surface.
  *
- * Governed episodic and lesson memory for Verbalogix Fractal. Local-first, with
- * an offline-pure governance core and an injected relevance layer.
+ * Governed episodic and lesson memory for the multi-app builder. Local-first,
+ * with an offline-pure governance core and an injected relevance layer.
  *
- * Import the core alone (`fractal-graph-memory/core`) to get the governance
+ * One cluster per build, not per workspace: what accumulates is what went wrong
+ * generating, running and repairing a given application, and a lesson only
+ * crosses builds through the control tier's human-approved promotion.
+ *
+ * Import the core alone (`multi-graph-memory/core`) to get the governance
  * model with no storage, provider or network code attached.
  */
 

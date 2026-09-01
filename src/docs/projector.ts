@@ -21,7 +21,7 @@ import { assertSafeToOverwrite, serializeDocument } from "./frontmatter.ts";
 import type { GraphMemory } from "../port.ts";
 import type { Lesson, LessonStatus, MemoryEvent } from "../core/types.ts";
 
-export const GENERATOR = "fractal-graph-memory@0.1.0";
+export const GENERATOR = "multi-graph-memory@0.2.0";
 
 export const AUTHORED_DOCUMENTS = ["ARCHITECTURE", "NOTES"] as const;
 export const GENERATED_DOCUMENTS = ["MEMORY", "DECISIONS", "LESSONS"] as const;

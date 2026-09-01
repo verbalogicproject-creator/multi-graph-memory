@@ -4,7 +4,7 @@
  * Ruling 9 in structure rather than in configuration:
  *
  *   GraphMemory       full surface, including approval and revocation. Reached
- *                     by the human CLI and by an eventual Fractal server.
+ *                     by the human CLI and by the builder's own server.
  *   ModelContextPort  a single method, `readMemoryContext`. Approval,
  *                     revocation, federation admission and re-homing are not
  *                     absent-by-flag here; they are absent by construction, so
@@ -72,7 +72,7 @@ export interface ContextRequest {
   domain?: LessonDomain;
   triggerTags?: string[];
   maxItems?: number;
-  /** Ruling 8: set for a turn that generates Fractal's three design directions. */
+  /** Ruling 8: set for a turn that generates the builder's three art directions. */
   directionGeneration?: boolean;
   now?: Date;
 }

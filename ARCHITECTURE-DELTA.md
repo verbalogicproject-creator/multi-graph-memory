@@ -13,8 +13,9 @@ no provider code, no network code and no key; relevance is an adapter, and the G
 implementation lives outside both. `npm run verify:pure` removes `@google/genai` from
 `node_modules`, clears the key, and runs the whole suite — **161 tests pass**.
 
-A second constraint forces the same shape independently: Fractal's browser never holds
-`GEMINI_API_KEY`, so a browser-resident component could not call `embedContent` anyway.
+A second constraint forces the same shape independently: multi-app's browser never holds
+`GEMINI_API_KEY` -- `server.js` is an Express proxy precisely so it does not -- and a
+browser-resident component therefore could not call `embedContent` anyway.
 
 ## D2 — SQLite added as the system of record
 
@@ -92,9 +93,11 @@ flag as the origin server does. A flag can be set wrongly; an absent capability 
 
 ## D11 — Cycle sequencing unchanged
 
-Per Ruling 10. Graph Memory remains a Cycle 2 Fractal concern. The MCP surface is
-implemented and tested but **not connected** to Fractal, and no Fractal server endpoint
-was added — the embedding service sits at the external CLI/server boundary.
+Per Ruling 10. The MCP surface is implemented and tested but **not connected** to any
+host, and no host server endpoint was added — the embedding service sits at the external
+CLI/server boundary. The sequencing constraint that produced this delta was specific to
+the original target; the shape it produced is kept because it is correct on its own terms.
+A transport that registers no mutation tool cannot be pointed at a live host by accident.
 
 ## D12 — The direction bar moved earlier
 
@@ -113,11 +116,11 @@ The deterministic adapter now reports only the signals it actually ran. A lesson
 lexical overlap and no tag match does not surface at all; surfacing it for being merely
 recent is noise, and noise is what erodes a bounded packet.
 
-## Open questions for Codex
+## Open questions
 
 1. **D1** — does adapter injection satisfy "no Gemini dependency", given the core carries no provider code, no network code and no key, and `verify:pure` proves it?
 2. **D3** — should the transmission-boundary rule be written into the specification?
-3. **D6** — is the control tier in scope for the returned component, or should it stay Fractal-side?
+3. **D6** — is the control tier in scope for this component, or should cross-build promotion live host-side?
 4. **D7** — is `deviation.observed` the right event name and shape, or would you prefer a different typed evidence kind?
 5. **D11** — is a read-only MCP surface acceptable to build now, given Graph Memory is specified as Cycle 2?
 6. **D12/D13** — both were found by dogfooding rather than by the acceptance list. Worth adding acceptance items for "the exclusion is structural" and "citations name only signals that ran"?

@@ -24,24 +24,24 @@ import { flagList, flagString, parseArgs, type ParsedArgs } from "./args.ts";
 import type { LessonDomain, LessonStatus } from "../core/types.ts";
 
 export const HELP = `
-fractal-memory — governed episodic and lesson memory
+multi-memory — governed episodic and lesson memory
 
-  fractal-memory                              interactive session
-  fractal-memory project status
-  fractal-memory project register                          add this cluster to the control tier
-  fractal-memory admit --workspace W --by NAME --purpose T [--projects a,b]
-  fractal-memory ask "<question>" [scope] [--component X] [--bug TAG] [--domain D] [--json]
-  fractal-memory lesson list [--status S] [--domain D]
-  fractal-memory lesson show <lessonId>
-  fractal-memory lesson approve <lessonId> --by <name>      (human only)
-  fractal-memory lesson revoke  <lessonId> --reason <text>  (human only)
-  fractal-memory episode list
-  fractal-memory episode show <episodeId>
-  fractal-memory docs generate [--dir <path>]
-  fractal-memory docs ingest <file>
-  fractal-memory sync export <file>
-  fractal-memory sync import <file>
-  fractal-memory doctor
+  multi-memory                              interactive session
+  multi-memory project status
+  multi-memory project register                          add this cluster to the control tier
+  multi-memory admit --workspace W --by NAME --purpose T [--projects a,b]
+  multi-memory ask "<question>" [scope] [--component X] [--bug TAG] [--domain D] [--json]
+  multi-memory lesson list [--status S] [--domain D]
+  multi-memory lesson show <lessonId>
+  multi-memory lesson approve <lessonId> --by <name>      (human only)
+  multi-memory lesson revoke  <lessonId> --reason <text>  (human only)
+  multi-memory episode list
+  multi-memory episode show <episodeId>
+  multi-memory docs generate [--dir <path>]
+  multi-memory docs ingest <file>
+  multi-memory sync export <file>
+  multi-memory sync import <file>
+  multi-memory doctor
 
 Scope vocabulary:
   @local | @current            the active project (default)
@@ -97,7 +97,7 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
   if (args.scope.kind === "workspace") {
     const task = args.positional.join(" ").trim();
     if (args.command !== "ask" || !task) {
-      return "Cross-workspace scope applies to `ask`. Usage: fractal-memory ask \"<question>\" @workspace:<name>";
+      return "Cross-workspace scope applies to `ask`. Usage: multi-memory ask \"<question>\" @workspace:<name>";
     }
     const result = await federatedQuery(context.openControl(), args.scope.name ?? "", { task });
     if (asJson) return out(result, true);
@@ -146,7 +146,7 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
       const by = flagString(args.flags, "by");
       const purpose = flagString(args.flags, "purpose");
       if (!workspace || !by || !purpose) {
-        return "Usage: fractal-memory admit --workspace <name> --by <approver> --purpose <text> [--projects a,b]";
+        return "Usage: multi-memory admit --workspace <name> --by <approver> --purpose <text> [--projects a,b]";
       }
       const admission = {
         approvedBy: by,
@@ -201,7 +201,7 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
 
     case "ask": {
       const task = args.positional.join(" ").trim();
-      if (!task) return "Usage: fractal-memory ask \"<question>\"";
+      if (!task) return "Usage: multi-memory ask \"<question>\"";
 
       const packet = await memory.queryContext({
         task,
@@ -254,7 +254,7 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
         }
 
         default:
-          return "Usage: fractal-memory lesson list|show|approve|revoke";
+          return "Usage: multi-memory lesson list|show|approve|revoke";
       }
     }
 
@@ -271,7 +271,7 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
         const episode = memory.getEpisode(args.positional[1] ?? "");
         return episode ? out(episode, true) : "No such episode in this project.";
       }
-      return "Usage: fractal-memory episode list|show";
+      return "Usage: multi-memory episode list|show";
     }
 
     case "docs": {
@@ -284,25 +284,25 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
       }
       if (args.sub === "ingest") {
         const file = args.positional[1];
-        if (!file) return "Usage: fractal-memory docs ingest <file>";
+        if (!file) return "Usage: multi-memory docs ingest <file>";
         const result = ingestAuthoredDocument(memory, file);
         const lines = [`ingested ${result.evidence.length} section(s) from ${result.path}`];
         for (const skip of result.skipped) lines.push(`skipped  ${skip}`);
         return lines.join("\n");
       }
-      return "Usage: fractal-memory docs generate|ingest";
+      return "Usage: multi-memory docs generate|ingest";
     }
 
     case "sync": {
       const file = args.positional[1];
       if (args.sub === "export") {
-        if (!file) return "Usage: fractal-memory sync export <file>";
+        if (!file) return "Usage: multi-memory sync export <file>";
         const bundle = memory.export();
         writeFileSync(file, JSON.stringify(bundle, null, 2), "utf8");
         return `Exported project "${memory.scope.projectId}" to ${file}\n  checksum ${bundle.checksum}`;
       }
       if (args.sub === "import") {
-        if (!file) return "Usage: fractal-memory sync import <file>";
+        if (!file) return "Usage: multi-memory sync import <file>";
         const result = memory.import(readFileSync(file, "utf8"));
         return [
           `Imported into "${result.projectId}"`,
@@ -311,7 +311,7 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
           `  duplicates skipped: ${result.skippedDuplicates}`,
         ].join("\n");
       }
-      return "Usage: fractal-memory sync export|import <file>";
+      return "Usage: multi-memory sync export|import <file>";
     }
 
     case "doctor": {
@@ -324,7 +324,7 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
         `lessons         ${lessons.length}`,
         `awaiting human  ${stuck.length} qualified lesson(s) need approval`,
         `contradicted    ${contradicted.length}`,
-        stuck.length > 0 ? `\nApprove with: fractal-memory lesson approve <id> --by <name>` : "",
+        stuck.length > 0 ? `\nApprove with: multi-memory lesson approve <id> --by <name>` : "",
       ].filter(Boolean).join("\n");
     }
 
@@ -348,7 +348,7 @@ const MENU = [
 /** Interactive session. Mutations always confirm before acting. */
 export async function interactive(context: RunContext): Promise<void> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  console.log(`\nfractal-memory — ${context.memory.scope.workspace}/${context.memory.scope.projectId}`);
+  console.log(`\nmulti-memory — ${context.memory.scope.workspace}/${context.memory.scope.projectId}`);
   console.log("Approval and revocation are available here and nowhere else.\n");
 
   try {

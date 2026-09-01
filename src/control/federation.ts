@@ -45,7 +45,7 @@ export async function federatedQuery(
   if (!stored) {
     refuse(
       "FEDERATION_NOT_ADMITTED",
-      `No federation admission recorded for workspace "${workspace}". Record one with \`fractal-memory admit\`.`,
+      `No federation admission recorded for workspace "${workspace}". Record one with \`multi-memory admit\`.`,
       { workspace },
     );
   }

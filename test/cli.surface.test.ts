@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HELP, openMemory, runCommand, formatError } from "../src/cli/fractal-memory.ts";
+import { HELP, openMemory, runCommand, formatError } from "../src/cli/multi-memory.ts";
 import { parseArgs } from "../src/cli/args.ts";
 import { GraphMemoryError } from "../src/core/errors.ts";
 import { READ_ONLY_TOOLS } from "../src/mcp/server.ts";
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "fgm-cli-"));
-  const context = openMemory({ projectRoot: dir, projectId: "cli-demo", clusterDir: join(dir, ".fractal-memory"), databasePath: join(dir, "memory.db") });
+  const context = openMemory({ projectRoot: dir, projectId: "cli-demo", clusterDir: join(dir, ".multi-memory"), databasePath: join(dir, "memory.db") });
   return { dir, context, cleanup: () => { context.storage.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
@@ -178,7 +178,7 @@ test("a cross-workspace read is refused without an admission record", async () =
       rendered = formatError(error);
     }
     assert.match(rendered, /^Refused \[FEDERATION_NOT_ADMITTED\]/);
-    assert.match(rendered, /fractal-memory admit/);
+    assert.match(rendered, /multi-memory admit/);
   } finally {
     cleanup();
   }

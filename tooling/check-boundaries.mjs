@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Boundary policy, mirroring Fractal's own tooling/check-boundaries.mjs.
+ * Boundary policy, modelled on the check:boundaries convention this component
+ * was originally written against. See PROVENANCE.md.
  *
  * Rulings 1 and 2 claim the governance core is pure: no provider code, no
  * network, no optional features, no credentials. A claim in a README is not a
