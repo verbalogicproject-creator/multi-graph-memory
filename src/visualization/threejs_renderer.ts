@@ -20,6 +20,15 @@
  *      halves: a semantic palette for the types this package actually emits, and
  *      a hash that varies only HUE while holding saturation and lightness fixed,
  *      so a type nobody has thought of yet is still guaranteed to be legible.
+ *   4. Labels are DOM, not 3D sprites. The obvious route, `three-spritetext`, is
+ *      a UMD bundle that assigns `globalThis.SpriteText = factory(globalThis.THREE)`
+ *      -- and `3d-force-graph` bundles its own three privately without exposing a
+ *      global, so the factory received `undefined` and `SpriteText` was never
+ *      defined. Observed: the Labels button rendered disabled and no label ever
+ *      appeared. Loading a second, global copy of three would fix it at the cost
+ *      of a third CDN dependency and two three instances in one page. Projecting
+ *      node positions with `graph2ScreenCoords` into absolutely-positioned divs
+ *      needs no extra dependency at all, and gives crisper text on a phone.
  *
  * `generateLiveHtml` was not ported: it polls a server endpoint this package
  * does not have. The output here is a single self-contained file.
@@ -56,10 +65,7 @@ export interface GraphData {
 export const BACKGROUND = "#0a0e27";
 
 /** Pinned, and the only external code the page loads. */
-export const EXTERNAL_SCRIPTS = [
-  "https://unpkg.com/3d-force-graph@1",
-  "https://unpkg.com/three-spritetext@1",
-] as const;
+export const EXTERNAL_SCRIPTS = ["https://unpkg.com/3d-force-graph@1"] as const;
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -262,6 +268,14 @@ export class ThreeJSGraphRenderer {
             color: var(--ink); font-family: inherit;
         }
         .rel-kind { color: var(--ink-dim); }
+        /* Labels are DOM, projected onto the canvas each frame. */
+        #labels { position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+        .node-label {
+            position: absolute; top: 0; left: 0; white-space: nowrap;
+            font-size: 11px; font-weight: 500; color: #dbe4f7;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 8px rgba(4,8,25,0.9);
+            transition: opacity 0.15s linear; will-change: transform;
+        }
         #empty {
             position: absolute; inset: 0; display: none; place-items: center; text-align: center;
             color: var(--ink-dim); font-size: 14px; padding: 30px; z-index: 2;
@@ -271,6 +285,7 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
 </head>
 <body>
     <div id="graph-container"></div>
+    <div id="labels"></div>
     <div id="empty">Nothing to show.<br><span style="font-size:12px">Every node type is filtered out.</span></div>
 
     <div id="top">
@@ -328,7 +343,11 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
 
         const elem = document.getElementById('graph-container');
         const sheet = document.getElementById('sheet');
-        const hasSprite = typeof SpriteText !== 'undefined';
+        const labelLayer = document.getElementById('labels');
+
+        /** Above this many nodes, labels are noise and the per-frame cost stops being free. */
+        const LABEL_LIMIT = 150;
+        let labelEls = new Map();
 
         function visibleData() {
             const nodes = graphData.nodes.filter(n => !hidden.has(n.type));
@@ -363,19 +382,45 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
 
         let Graph;
 
-        function labelObject(node) {
-            if (!hasSprite || !showLabels) return null;
-            const text = node.name.length > 28 ? node.name.slice(0, 27) + '…' : node.name;
-            const sprite = new SpriteText(text);
-            sprite.color = (focus && !focus.nodes.has(node.id)) ? 'rgba(150,160,190,0.25)' : '#dbe4f7';
-            sprite.textHeight = 3.2;
-            sprite.position.y = -(Math.cbrt(node.val || 1) * 3.4 + 3.2);
-            return sprite;
+        function rebuildLabels() {
+            labelLayer.textContent = '';
+            labelEls = new Map();
+            if (!showLabels) return;
+            const nodes = Graph.graphData().nodes;
+            if (nodes.length > LABEL_LIMIT) return;
+            for (const node of nodes) {
+                const el = document.createElement('div');
+                el.className = 'node-label';
+                el.textContent = node.name.length > 26 ? node.name.slice(0, 25) + '…' : node.name;
+                el.style.opacity = '0';
+                labelLayer.appendChild(el);
+                labelEls.set(node.id, el);
+            }
+        }
+
+        /** Runs every frame: the camera can move at any time, including under inertia. */
+        function positionLabels() {
+            if (labelEls.size === 0) return;
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            for (const node of Graph.graphData().nodes) {
+                const el = labelEls.get(node.id);
+                if (!el) continue;
+                if (node.x === undefined) { el.style.opacity = '0'; continue; }
+                const at = Graph.graph2ScreenCoords(node.x, node.y, node.z || 0);
+                // Behind the camera or off-screen: projection still returns a point.
+                if (!at || !Number.isFinite(at.x) || at.x < -100 || at.y < -60 || at.x > w + 100 || at.y > h + 60) {
+                    el.style.opacity = '0';
+                    continue;
+                }
+                const drop = Math.cbrt(node.val || 1) * 3 + 12;
+                el.style.transform = 'translate(-50%, 0) translate(' + Math.round(at.x) + 'px, ' + Math.round(at.y + drop) + 'px)';
+                el.style.opacity = (focus && !focus.nodes.has(node.id)) ? '0.15' : '0.95';
+            }
         }
 
         function refresh() {
             Graph.nodeColor(nodeColor).linkColor(linkColor).linkWidth(linkWidth);
-            if (hasSprite) Graph.nodeThreeObject(labelObject);
         }
 
         /** Everything reachable from a node: the whole causal story it belongs to. */
@@ -485,9 +530,13 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
                 .linkDirectionalParticleSpeed(0.006)
                 .onBackgroundClick(clearFocus);
 
-            if (hasSprite) Graph.nodeThreeObjectExtend(true).nodeThreeObject(labelObject);
-
             Graph.onEngineStop(() => Graph.zoomToFit(500, 60));
+
+            rebuildLabels();
+            (function paint() {
+                positionLabels();
+                requestAnimationFrame(paint);
+            })();
 
             // Tap selects the node and its immediate neighbours. Tapping the SAME
             // node again widens the focus to its whole connected component -- the
@@ -511,9 +560,8 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
             labelsBtn.onclick = () => {
                 showLabels = !showLabels;
                 labelsBtn.classList.toggle('on', showLabels);
-                refresh();
+                rebuildLabels();
             };
-            if (!hasSprite) { labelsBtn.disabled = true; labelsBtn.style.opacity = '0.4'; }
 
             const clusterBtn = document.getElementById('btn-clusters');
             clusterBtn.onclick = () => {
@@ -531,6 +579,7 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
                     focus = null;
                     selectedId = null;
                     applyFilters();
+                    rebuildLabels();
                     refresh();
                 };
             }
