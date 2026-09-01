@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added — a build, so a plain-JavaScript host can consume the package
+
+The package runs its own TypeScript directly on Node's type stripping, which is
+why it has never needed a build. A consumer cannot do that: Node strips types in
+a project's own files and **never inside `node_modules`**. So the multi-app
+server — plain ESM `.js`, no build step — could not have imported this at all.
+
+- `tsconfig.build.json` + `npm run build`. Close to mechanical, because the source
+  already satisfies `erasableSyntaxOnly`: strip types, rewrite `./x.ts` specifiers
+  to `./x.js` via `rewriteRelativeImportExtensions`. No bundler, no downlevel.
+- `exports` and `bin` now point at `dist/`; `npm run memory` and `npm run mcp` still
+  run the source directly, so development is unchanged.
+- `tooling/check-dist.mjs`, wired into `npm run check`. Deliberately `.mjs` and
+  importing only through the package's own exports map, so it fails the way a real
+  consumer would. A green test suite proves nothing here — the suite runs the source
+  on type stripping, which is exactly the thing a consumer cannot do. It drives the
+  real loop (open, append attributed event, close, query) and asserts that
+  `ModelContextPort` is still approval-free in the built artifact.
+- **Confirmed, not assumed:** installed into a scratch project as a `file:`
+  dependency and imported from plain JS. npm's script policy skipped `prepare`, so a
+  consumer does not get an automatic build — which is why the host must build
+  explicitly and degrade gracefully when `dist/` is absent, rather than assume it.
+
 ### Added — schema version 2: provider and model attribution
 
 The host became multi-provider (Google, Anthropic, OpenAI, NVIDIA behind one

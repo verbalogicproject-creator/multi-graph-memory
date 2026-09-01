@@ -1,0 +1,26 @@
+/**
+ * Emit configuration, used only by `npm run build`.
+ *
+ * The package runs its own source directly on Node's type stripping, so nothing
+ * here is needed to develop or test it. It exists for ONE reason: a consumer
+ * written in plain JavaScript cannot import TypeScript from node_modules --
+ * Node strips types in a project's own files, never inside a dependency.
+ *
+ * Because the source already satisfies `erasableSyntaxOnly`, this emit is close
+ * to mechanical: strip the types, and rewrite `./x.ts` specifiers to `./x.js`
+ * (rewriteRelativeImportExtensions). No transform, no bundler, no downlevel.
+ */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "rewriteRelativeImportExtensions": true,
+    "removeComments": false
+  },
+  "include": ["src/**/*.ts", "bin/**/*.ts"]
+}

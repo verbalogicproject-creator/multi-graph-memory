@@ -10,18 +10,28 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "multi-memory": "./bin/multi-memory.ts"
+    "multi-memory": "./dist/bin/multi-memory.js"
   },
   "exports": {
-    ".": "./src/index.ts",
-    "./core": "./src/core/index.ts",
-    "./adapters": "./src/adapters/index.ts"
+    ".": { "types": "./dist/src/index.d.ts", "default": "./dist/src/index.js" },
+    "./core": { "types": "./dist/src/core/index.d.ts", "default": "./dist/src/core/index.js" },
+    "./adapters": { "types": "./dist/src/adapters/index.d.ts", "default": "./dist/src/adapters/index.js" }
   },
+  "files": [
+    "dist",
+    "schemas",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "check:boundaries": "node tooling/check-boundaries.mjs",
-    "check": "npm run check:boundaries && npm run typecheck && npm test",
+    "check:dist": "npm run build && node tooling/check-dist.mjs",
+    "check": "npm run check:boundaries && npm run typecheck && npm test && npm run check:dist",
     "verify:pure": "node tooling/verify-pure.mjs",
     "schemas": "node tooling/emit-schemas.mjs",
     "mcp": "node src/mcp/server.ts",
