@@ -26,7 +26,7 @@ const FORBIDDEN_IN_CORE = [
 ];
 
 /** Layers that must never be reachable from the core. */
-const FORBIDDEN_CORE_DIRS = ["providers", "optional", "relevance", "control", "mcp", "cli", "docs"];
+const FORBIDDEN_CORE_DIRS = ["providers", "optional", "relevance", "control", "mcp", "cli", "docs", "visualization"];
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {

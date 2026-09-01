@@ -173,6 +173,36 @@ multi-memory sync export bundle.json
 
 Scope vocabulary: `@local` (default) · `@workspace:<name>` (needs an admission record) · `@global` (control tier).
 
+## Visual graph
+
+The lineage is a real graph, and the edges *are* the governance:
+
+```
+episode ──produced──> lesson ──cites──> evidence
+   │                    ^
+   └──reused-in─────────┘   must be a DIFFERENT episode — this edge is the ratchet
+
+evidence ──contradicts──> lesson
+episode  ──applied─────>  lesson
+```
+
+```bash
+multi-memory graph export graph.html    # self-contained 3D page, opens from disk
+multi-memory graph export graph.json    # nodes + edges for any other viewer
+```
+
+Node colour is type and status (`episode:verified`, `lesson:proposed`, `lesson:approved`,
+`lesson:contradicted`, `evidence`); node size is degree centrality.
+
+It is diagnostic rather than decorative. **A lesson stuck at `proposed` has one `produced`
+edge and no `reused-in` edge — the absent edge is the reason it has not been promoted.** A
+table of statuses tells you a lesson is unpromoted; the graph tells you why.
+
+Export is a redaction gate (Ruling 3), so a picture is not a route around the boundary that
+`sync export` respects. The renderer emits one file whose only external reference is a
+version-pinned `3d-force-graph`; all graph content is HTML-escaped and JSON-hardened before
+interpolation.
+
 ## Storage
 
 | Adapter | Role |

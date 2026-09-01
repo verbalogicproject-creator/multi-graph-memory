@@ -5,6 +5,18 @@
 Retargeted from Verbalogix Fractal to the multi-app builder, in place. The governance
 core, storage, relevance and surfaces are unchanged; what moved is who the host is.
 
+### Added — visual graph renderer and exporter
+- `src/visualization/`, ported from `/root/hybrid-graph-memory` (see PROVENANCE.md).
+- `multi-memory graph export <file.html|file.json>`: a self-contained 3D page, or nodes and
+  edges for any other viewer.
+- The edge vocabulary is declared, not inferred: `produced`, `reused-in`, `cites`,
+  `contradicts`, `applied`. The `reused-in` edge is the ratchet, which makes the picture
+  diagnostic — a lesson stuck at `proposed` is one whose reuse edge is missing.
+- Export passes the Ruling 3 redaction gate. A graph is not a route around the boundary.
+- Fixed in the port: the donor's CDN reference was unpinned, and its computed node sizing
+  was dropped before reaching the renderer. Both repaired and covered by tests.
+- 9 tests added; suite is 167 passing.
+
 ### Renamed
 - Package `fractal-graph-memory` → `multi-graph-memory`; CLI `fractal-memory` → `multi-memory`.
 - Cluster directory `.fractal-memory/` → `.multi-memory/`; config `.fractal-memory.json` → `.multi-memory.json`.

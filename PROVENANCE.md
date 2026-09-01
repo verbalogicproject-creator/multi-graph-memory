@@ -60,6 +60,29 @@ exactly one package.
 `allowScripts` keeps the posture this component was written with: install scripts are
 disabled for `@google/genai` and `protobufjs`.
 
+## Visualization
+
+| Module | Origin | Author | License |
+|---|---|---|---|
+| `src/visualization/threejs_renderer.ts` | `/root/hybrid-graph-memory` `src/visualization/threejs_renderer.ts` | Eyal Nof | MIT |
+| `src/visualization/exporter.ts` | same path, **rewritten** — see below | Eyal Nof | MIT |
+
+The renderer transferred nearly intact. Two defects were fixed in the port:
+
+1. **Unpinned CDN.** The donor loaded `unpkg.com/3d-force-graph` with no version, so a
+   rendered file's behaviour changed whenever upstream published. Pinned to `@1`.
+2. **Node sizing never rendered.** The donor's exporter computed degree centrality into
+   `val` ("Topological Node Gravity") and the `gData` mapping dropped the field, so the
+   renderer never received it. `val` is now carried and bound via `.nodeVal()`.
+
+`generateLiveHtml` was not ported — it polls a server endpoint this package does not have.
+
+The exporter was **rewritten rather than adapted**. The donor built its graph from a code
+relation table with node types guessed from identifier spelling. This package has no such
+table; it has a governance lineage, so the edge vocabulary is declared (`EDGE_KINDS`) and
+every edge is a recorded fact rather than an inference. The export also passes the Ruling 3
+redaction gate, which the donor had no equivalent of.
+
 ## Known gaps
 
 - `/root/antigravity-memory-os` declares MIT in `package.json` but ships **no LICENSE file**. This package includes one.

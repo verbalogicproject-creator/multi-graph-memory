@@ -16,6 +16,7 @@ import { GraphMemory } from "../port.ts";
 import { renderPacket } from "../core/packet.ts";
 import { isGraphMemoryError } from "../core/errors.ts";
 import { projectDocuments } from "../docs/projector.ts";
+import { exportGraphHtml, exportGraphJson } from "../visualization/index.ts";
 import { ingestAuthoredDocument } from "../docs/ingest.ts";
 import { ControlStore } from "../control/registry.ts";
 import { federatedQuery } from "../control/federation.ts";
@@ -39,6 +40,7 @@ multi-memory — governed episodic and lesson memory
   multi-memory episode show <episodeId>
   multi-memory docs generate [--dir <path>]
   multi-memory docs ingest <file>
+  multi-memory graph export <file.html|file.json>       3D graph, or nodes+edges
   multi-memory sync export <file>
   multi-memory sync import <file>
   multi-memory doctor
@@ -291,6 +293,24 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
         return lines.join("\n");
       }
       return "Usage: multi-memory docs generate|ingest";
+    }
+
+    case "graph": {
+      const file = args.positional[1];
+      if (args.sub === "export") {
+        if (!file) return "Usage: multi-memory graph export <file.html|file.json>";
+        const asJson = file.endsWith(".json");
+        const projection = asJson
+          ? exportGraphJson(memory, file)
+          : exportGraphHtml(memory, file);
+        const { episodes, lessons, evidence, edges } = projection.counts;
+        return [
+          `wrote ${file}`,
+          `  ${episodes} episode(s) · ${lessons} lesson(s) · ${evidence} evidence · ${edges} edge(s)`,
+          asJson ? "  nodes and edges as JSON" : "  open it in a browser; it is one self-contained file",
+        ].join("\n");
+      }
+      return "Usage: multi-memory graph export <file.html|file.json>";
     }
 
     case "sync": {

@@ -16,6 +16,7 @@ export * from "./core/index.ts";
 export * from "./adapters/index.ts";
 export * from "./relevance/index.ts";
 export * from "./port.ts";
+export * from "./visualization/index.ts";
 export * from "./docs/frontmatter.ts";
 export * from "./docs/projector.ts";
 export * from "./docs/ingest.ts";
