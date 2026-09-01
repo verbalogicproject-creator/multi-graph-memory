@@ -21,6 +21,45 @@ Each file carries a header naming its origin and its modifications.
 | `src/relevance/vendored/rank_fusion.ts` | `antigravity-memory-os/src/retrieval/rank_fusion.ts` | `RankedCandidate` trimmed to populated fields; three near-identical loops collapsed into one helper. **Formula, intent weights, k=60, half-life and decay floor unchanged.** | `test/relevance.ranking.test.ts` |
 | `src/relevance/vendored/intent.ts` | `antigravity-memory-os/src/retrieval/intent.ts` | `RetrievalIntent` narrowed to the five values the function can actually return (the original declared eight, three of which it never produced). Keyword lists unchanged. | `test/relevance.ranking.test.ts` |
 
+## Translated modules
+
+Recognisably the same algorithm, rewritten in TypeScript rather than copied. Each
+carries a header naming its origin, and a covering test that compares against
+output captured from the original implementation.
+
+| File | Origin | Modifications | Covered by |
+|---|---|---|---|
+| `src/kg/types.ts` | `kg_toolkit/kg_toolkit/schema.py` (Eyal Nof, Apache-2.0) | Endpoint predicates are free functions rather than dataclass methods (`erasableSyntaxOnly` forbids behaviour-carrying classes here); constraint tuples become `readonly string[]`; `validateSchema` added, which the original spreads across `__post_init__` hooks. The `::` node-id convention, the "empty constraint means any" rule, and the endpoint semantics are unchanged. | `test/kg.integrity.test.ts` |
+| `src/kg/integrity.ts` | `kg_toolkit/kg_toolkit/integrity.py` (Eyal Nof, Apache-2.0) | Operates on a plain `TypedGraph` instead of a storage manager, so the checker is pure and needs no database. **`findCycle` is iterative rather than recursive** — see below. Check names, order, severities and message text are byte-identical to the original, including Python `repr`-style quoting, so the parity test can compare whole messages. | `test/kg.integrity.test.ts` |
+
+### The one behavioural difference, and why
+
+`integrity.py:_find_cycle` recurses once per node. Verified 2026-09-01 against the
+original: a 50,000-node chain raises `RecursionError: maximum recursion depth
+exceeded` (CPython's default limit is 1000), so the check cannot run on a deep
+graph — and a check that raises on the graphs most likely to contain a cycle is
+not a check.
+
+The port keeps an explicit stack. Traversal order, determinism (start nodes and
+successors visited in sorted id order) and the cycle reported are unchanged;
+`test/kg.integrity.test.ts` exercises the 50,000-deep case in both the
+no-cycle and cycle-present forms.
+
+### Why this lives outside `src/core/**`
+
+`src/kg/**` is a general typed-graph contract, not a memory record. The core owns
+episodes, events, lessons and evidence, and must not acquire a second graph model;
+`tooling/check-boundaries.mjs` lists `kg` among the directories the core may not
+reach, so that stays true by machine check rather than by intent.
+
+### What it is for
+
+`src/adapters/sqlite.ts` sets `PRAGMA foreign_keys = ON` while no table declares a
+foreign key, so the pragma enforces nothing, and `src/visualization/exporter.ts`
+skips a dangling reference rather than reporting it. Both are right not to invent
+data; both currently leave a dangling reference invisible. This module is what can
+say so out loud.
+
 ## Adapted modules
 
 Recognisably derived, but retargeted enough that vendoring a copy would leave dead code.
