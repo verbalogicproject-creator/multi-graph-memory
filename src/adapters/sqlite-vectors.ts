@@ -50,6 +50,9 @@ export class SqliteVectorStore implements VectorStore {
     if (path !== ":memory:" && !path.startsWith("file:")) mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode = WAL;");
+    // Same reason as the main store: this file has more than one legitimate
+    // writer, and without a timeout the second fails instantly on any overlap.
+    this.db.exec("PRAGMA busy_timeout = 2000;");
     this.db.exec(SCHEMA);
   }
 

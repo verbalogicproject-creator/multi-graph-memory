@@ -321,44 +321,77 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
     }
 
     /**
-     * Who produced what. A count per provider/model, and how those attempts
-     * turned out -- the raw material for judging a provider on this project
-     * rather than on its own claims.
+     * Who produced what.
+     *
+     * Event attribution and episode attribution are two INDEPENDENT axes, and the
+     * report keeps them apart. An event records the model that served that one
+     * call; an episode records the model that served the attempt as a whole. A
+     * fallback chain can serve different steps of one episode from different
+     * providers, so putting an events count and an outcome count in the same row
+     * would imply a coverage relationship the data does not establish -- it would
+     * read as "this producer did N things and M of them verified" when the N and
+     * the M can come from entirely unrelated records.
      */
     case "attribution": {
-      const events = memory.queryEvents({});
-      const episodes = memory.listEpisodes();
-
-      const byProducer = new Map<string, { events: number; verified: number; failed: number; open: number }>();
-      const bucket = (key: string) => {
-        const existing = byProducer.get(key);
-        if (existing) return existing;
-        const fresh = { events: 0, verified: 0, failed: 0, open: 0 };
-        byProducer.set(key, fresh);
-        return fresh;
-      };
       const nameOf = (provider?: string, model?: string) =>
         [provider, model].filter(Boolean).join("/") || "unattributed";
 
-      for (const e of events) bucket(nameOf(e.provider, e.model)).events += 1;
-      for (const ep of episodes) {
-        const slot = bucket(nameOf(ep.provider, ep.model));
-        if (ep.outcome === "verified") slot.verified += 1;
-        else if (ep.outcome === "failed") slot.failed += 1;
-        else if (ep.outcome === undefined) slot.open += 1;
+      const eventCounts = new Map<string, number>();
+      for (const e of memory.queryEvents({})) {
+        const key = nameOf(e.provider, e.model);
+        eventCounts.set(key, (eventCounts.get(key) ?? 0) + 1);
       }
 
-      const rows = [...byProducer.entries()].sort((a, b) => b[1].events - a[1].events);
-      if (asJson) return out(rows.map(([producer, counts]) => ({ producer, ...counts })), true);
-      if (rows.length === 0) return "Nothing recorded yet.";
-      return [
-        `${"producer".padEnd(34)} events  verified  failed  open`,
-        ...rows.map(([producer, c]) =>
-          `${producer.padEnd(34)} ${String(c.events).padStart(6)}  ${String(c.verified).padStart(8)}  ${String(c.failed).padStart(6)}  ${String(c.open).padStart(4)}`,
-        ),
+      const outcomeCounts = new Map<string, { verified: number; failed: number; abandoned: number; open: number }>();
+      for (const ep of memory.listEpisodes()) {
+        const key = nameOf(ep.provider, ep.model);
+        const slot = outcomeCounts.get(key) ?? { verified: 0, failed: 0, abandoned: 0, open: 0 };
+        if (ep.outcome === "verified") slot.verified += 1;
+        else if (ep.outcome === "failed") slot.failed += 1;
+        else if (ep.outcome === "abandoned") slot.abandoned += 1;
+        else slot.open += 1;
+        outcomeCounts.set(key, slot);
+      }
+
+      const byEvents = [...eventCounts.entries()].sort((a, b) => b[1] - a[1]);
+      const byEpisodes = [...outcomeCounts.entries()].sort(
+        (a, b) => (b[1].verified + b[1].failed + b[1].abandoned + b[1].open)
+          - (a[1].verified + a[1].failed + a[1].abandoned + a[1].open),
+      );
+
+      if (asJson) {
+        return out(
+          {
+            byEventAttribution: byEvents.map(([producer, events]) => ({ producer, events })),
+            byEpisodeAttribution: byEpisodes.map(([producer, counts]) => ({ producer, ...counts })),
+            note: "Two independent axes. An event names the model that served one call; an episode names the model that served the attempt.",
+          },
+          true,
+        );
+      }
+      if (byEvents.length === 0 && byEpisodes.length === 0) return "Nothing recorded yet.";
+
+      const lines: string[] = [];
+      lines.push("Events — the model that served each individual call");
+      if (byEvents.length === 0) lines.push("  (none)");
+      for (const [producer, count] of byEvents) {
+        lines.push(`  ${producer.padEnd(34)} ${String(count).padStart(5)}`);
+      }
+      lines.push("", "Episodes — the model that served the attempt, and how it ended");
+      if (byEpisodes.length === 0) lines.push("  (none)");
+      else lines.push(`  ${"producer".padEnd(34)} verified  failed  abandoned  open`);
+      for (const [producer, c] of byEpisodes) {
+        lines.push(
+          `  ${producer.padEnd(34)} ${String(c.verified).padStart(8)}  ${String(c.failed).padStart(6)}  ${String(c.abandoned).padStart(9)}  ${String(c.open).padStart(4)}`,
+        );
+      }
+      lines.push(
         "",
-        "Counts only. An outcome is what was observed, not a verdict on a provider.",
-      ].join("\n");
+        "Two independent axes: one episode can be served by several models, so the",
+        "two tables do not sum to each other. Counts only — an outcome is what was",
+        "observed, not a verdict on a provider.",
+      );
+      return lines.join("\n");
     }
 
     case "docs": {

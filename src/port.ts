@@ -253,17 +253,25 @@ export class GraphMemory {
 
     if (barred.length === 0) return packet;
 
-    // Report what the candidate-stage bar removed, so the omission notice stays truthful.
-    const dropped = packet.omissions.droppedForDirectionBar + barred.length;
+    // Report what the candidate-stage bar removed, so the omission notice stays
+    // truthful. The note is rebuilt from the numbers rather than string-patched
+    // into the packet's own sentence: patching only matched the "All candidates
+    // returned." wording, so a turn that ALSO dropped items for diversity or
+    // budget produced a sentence that contradicted itself.
+    const droppedForDirectionBar = packet.omissions.droppedForDirectionBar + barred.length;
+    const consideredCount = packet.omissions.consideredCount + barred.length;
+    const omitted = consideredCount - packet.omissions.returnedCount;
+    const { droppedForDiversity, droppedForBudget } = packet.omissions;
+
     return {
       ...packet,
       omissions: {
         ...packet.omissions,
-        consideredCount: packet.omissions.consideredCount + barred.length,
-        droppedForDirectionBar: dropped,
+        consideredCount,
+        droppedForDirectionBar,
         note:
-          `${dropped} candidate(s) barred from direction generation; ` +
-          packet.omissions.note.replace(/^All candidates returned\.$/, "the rest were returned."),
+          `${omitted} candidate(s) omitted: ${droppedForDirectionBar} barred from direction generation, ` +
+          `${droppedForDiversity} for source diversity, ${droppedForBudget} for the item and character budget.`,
       },
     };
   }

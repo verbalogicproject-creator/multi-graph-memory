@@ -314,22 +314,34 @@ test("an unattributed record reads as unattributed rather than as a provider", a
   }
 });
 
-test("attribution counts what was produced, and stays counts", async () => {
+test("attribution keeps event and episode attribution as separate axes", async () => {
   const { context, cleanup } = setup();
   try {
     seedAttributed(context);
 
-    const rows = JSON.parse(await run("attribution --json", context));
-    const google = rows.find((r: { producer: string }) => r.producer === "google/gemini-3.7-flash");
-    const anthropic = rows.find((r: { producer: string }) => r.producer === "anthropic/claude-haiku-4-5");
+    const report = JSON.parse(await run("attribution --json", context));
 
-    assert.equal(google.events, 1);
-    assert.equal(google.verified, 1);
-    assert.equal(anthropic.failed, 1);
+    // An event names the model that served ONE call; an episode names the model
+    // that served the attempt. A fallback chain can serve different steps of one
+    // episode from different providers, so a single row carrying both an events
+    // count and an outcome count would assert a coverage relationship the data
+    // does not establish.
+    const events = report.byEventAttribution;
+    const episodes = report.byEpisodeAttribution;
+
+    assert.equal(events.find((r: { producer: string }) => r.producer === "google/gemini-3.7-flash").events, 1);
+    assert.equal(events.find((r: { producer: string }) => r.producer === "anthropic/claude-haiku-4-5").events, 1);
+    assert.equal(episodes.find((r: { producer: string }) => r.producer === "google/gemini-3.7-flash").verified, 1);
+    assert.equal(episodes.find((r: { producer: string }) => r.producer === "anthropic/claude-haiku-4-5").failed, 1);
+
+    // No row may carry both axes at once.
+    for (const row of events) assert.equal(row.verified, undefined, "an event row has no outcome column");
+    for (const row of episodes) assert.equal(row.events, undefined, "an episode row has no events column");
 
     // It reports observations, and says so rather than ranking providers.
     const text = await run("attribution", context);
     assert.match(text, /Counts only/);
+    assert.match(text, /two tables do not sum/);
     assert.doesNotMatch(text, /best|worst|recommend/i);
   } finally {
     cleanup();

@@ -14,7 +14,14 @@
  *   5. redaction (import side)  -- never trust a bundle's own hygiene
  */
 
-import { canonicalize, sha256Hex } from "./canonical.ts";
+import {
+  canonicalize,
+  deriveEpisodeId,
+  deriveEventId,
+  deriveEvidenceId,
+  deriveLessonId,
+  sha256Hex,
+} from "./canonical.ts";
 import { refuse } from "./errors.ts";
 import { applyMigrations, CURRENT_SCHEMA_VERSION, planMigration, SUPPORTED_SCHEMA_VERSIONS } from "./migrate.ts";
 import { assertRedactionBoundary } from "./redaction.ts";
@@ -112,6 +119,113 @@ export function validateBundle(raw: unknown): ExportBundle {
   return bundle;
 }
 
+/**
+ * Moves a bundle to a new project, re-deriving every identity.
+ *
+ * `projectId` is part of what an id is a hash of. Rewriting the field while
+ * keeping the old id would leave a record whose id no longer authenticates its
+ * own content -- the exact property the rest of the system leans on: idempotent
+ * re-import, outbox dedupe, and export checksums all assume "same content, same
+ * id". A second import of the same bundle would then compute a different id than
+ * the one stored and duplicate the record instead of skipping it.
+ *
+ * So ids are recomputed, and every reference between records is remapped with
+ * them. Order matters, because identity is derived from content and content
+ * includes references: evidence and episodes first (they reference nothing),
+ * then lessons, then events -- and events last of all, in supersession order,
+ * because an event that supersedes another hashes that other event's id.
+ */
+export function rehomeRecords(
+  bundle: ExportBundle,
+  targetProjectId: string,
+): Pick<ExportBundle, "events" | "episodes" | "lessons" | "evidence"> {
+  const evidenceIds = new Map<string, string>();
+  const episodeIds = new Map<string, string>();
+  const eventIds = new Map<string, string>();
+
+  const evidence = bundle.evidence.map((record) => {
+    const moved = { ...record, projectId: targetProjectId };
+    moved.id = deriveEvidenceId(moved.projectId, moved.kind, moved.ref);
+    evidenceIds.set(record.id, moved.id);
+    return moved;
+  });
+
+  const episodes = bundle.episodes.map((record) => {
+    const moved = { ...record, projectId: targetProjectId };
+    moved.id = deriveEpisodeId(moved.projectId, moved.objective, moved.baseRevisionId, moved.openedAt);
+    episodeIds.set(record.id, moved.id);
+    return moved;
+  });
+
+  // A reference that cannot be remapped is dropped rather than left dangling:
+  // pointing at an id that exists in no project is worse than pointing at nothing.
+  const remap = (map: Map<string, string>, ids: readonly string[]): string[] =>
+    ids.map((id) => map.get(id)).filter((id): id is string => id !== undefined);
+
+  const lessons = bundle.lessons.map((record) => {
+    const moved = {
+      ...record,
+      projectId: targetProjectId,
+      sourceEpisodeIds: remap(episodeIds, record.sourceEpisodeIds),
+      evidenceIds: remap(evidenceIds, record.evidenceIds),
+      contradictionIds: remap(evidenceIds, record.contradictionIds),
+      deviationIds: remap(evidenceIds, record.deviationIds),
+    };
+    if (record.reuseEpisodeId !== undefined) {
+      const reuse = episodeIds.get(record.reuseEpisodeId);
+      if (reuse === undefined) delete moved.reuseEpisodeId;
+      else moved.reuseEpisodeId = reuse;
+    }
+    moved.id = deriveLessonId(moved.projectId, moved.trigger, moved.recommendation, moved.domain);
+    return moved;
+  });
+
+  const lessonIds = new Map(bundle.lessons.map((record, index) => [record.id, lessons[index]!.id]));
+  for (const episode of episodes) {
+    episode.appliedLessonIds = remap(lessonIds, episode.appliedLessonIds);
+  }
+
+  // Supersession is a chain, so an event can only be re-derived once the event it
+  // supersedes has been. Resolve in waves rather than assuming bundle order.
+  const pending = [...bundle.events];
+  const events: ExportBundle["events"] = [];
+  while (pending.length > 0) {
+    const ready = pending.filter(
+      (record) => record.supersedesEventId === undefined || eventIds.has(record.supersedesEventId),
+    );
+    if (ready.length === 0) {
+      // A cycle, or a chain reaching outside the bundle. Neither can be re-derived
+      // honestly, so refuse rather than write records with invented lineage.
+      refuse("VALIDATION_FAILED", "Cannot re-home events whose supersession chain is unresolvable.", {
+        unresolved: pending.map((record) => record.id).slice(0, 10),
+      });
+    }
+    for (const record of ready) {
+      const moved = {
+        ...record,
+        projectId: targetProjectId,
+        evidenceIds: remap(evidenceIds, record.evidenceIds),
+      };
+      if (record.episodeId !== undefined) {
+        const episodeId = episodeIds.get(record.episodeId);
+        if (episodeId === undefined) delete moved.episodeId;
+        else moved.episodeId = episodeId;
+      }
+      if (record.supersedesEventId !== undefined) {
+        moved.supersedesEventId = eventIds.get(record.supersedesEventId)!;
+      }
+      const { id: _old, ...body } = moved;
+      moved.id = deriveEventId(body as Record<string, unknown>);
+      eventIds.set(record.id, moved.id);
+      events.push(moved);
+    }
+    const done = new Set(ready);
+    pending.splice(0, pending.length, ...pending.filter((record) => !done.has(record)));
+  }
+
+  return { evidence, episodes, lessons, events };
+}
+
 export function importBundle(
   storage: StorageAdapter,
   raw: unknown,
@@ -140,33 +254,34 @@ export function importBundle(
   assertRedactionBoundary(migrated, "persistence", { maxBytes: Number.MAX_SAFE_INTEGER });
 
   const rehomed = migrated.projectId !== targetProjectId;
-  const retarget = <T extends { projectId: string }>(record: T): T =>
-    rehomed ? { ...record, projectId: targetProjectId } : record;
+  const { evidence, episodes, lessons, events } = rehomed
+    ? rehomeRecords(migrated, targetProjectId)
+    : migrated;
 
   return storage.transact((tx) => {
     const imported = { events: 0, episodes: 0, lessons: 0, evidence: 0 };
     let skippedDuplicates = 0;
 
-    for (const evidence of migrated.evidence) {
-      if (tx.putEvidenceIfAbsent(retarget(evidence))) imported.evidence += 1;
+    for (const record of evidence) {
+      if (tx.putEvidenceIfAbsent(record)) imported.evidence += 1;
       else skippedDuplicates += 1;
     }
-    for (const episode of migrated.episodes) {
+    for (const episode of episodes) {
       if (tx.getEpisode(episode.id)) skippedDuplicates += 1;
       else {
-        tx.putEpisode(retarget(episode));
+        tx.putEpisode(episode);
         imported.episodes += 1;
       }
     }
-    for (const lesson of migrated.lessons) {
+    for (const lesson of lessons) {
       if (tx.getLesson(lesson.id)) skippedDuplicates += 1;
       else {
-        tx.putLesson(retarget(lesson));
+        tx.putLesson(lesson);
         imported.lessons += 1;
       }
     }
-    for (const event of migrated.events) {
-      if (tx.putEventIfAbsent(retarget(event))) imported.events += 1;
+    for (const event of events) {
+      if (tx.putEventIfAbsent(event)) imported.events += 1;
       else skippedDuplicates += 1;
     }
 
