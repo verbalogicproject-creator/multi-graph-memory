@@ -13,6 +13,11 @@ import {
   projectGraph,
   serializeGraph,
 } from "../src/visualization/index.ts";
+import {
+  deterministicColor,
+  EXTERNAL_SCRIPTS,
+  ThreeJSGraphRenderer,
+} from "../src/visualization/threejs_renderer.ts";
 
 function seeded() {
   const storage = new MemoryStorageAdapter();
@@ -114,11 +119,53 @@ test("node size reflects degree, and reaches the rendered payload", () => {
   exportGraphHtml(memory, out);
   const html = readFileSync(out, "utf8");
   // The donor dropped `val` when mapping to gData, so sizing never rendered.
-  assert.match(html, /val: n\.val/, "val is carried into the render payload");
+  // Assert the property rather than one spelling of the mapping: the value must
+  // survive into the payload AND be bound to node size.
+  assert.match(html, /"val":\s*\d/, "val is carried into the render payload");
   assert.match(html, /\.nodeVal\(/, "and is bound to node size");
 });
 
-test("the html export is self-contained and pins its one external script", () => {
+test("every colour is legible against the page background", () => {
+  // The donor's palette named ITS node types and none of this package's, so
+  // every memory node fell through to a hash of its type string -- which has no
+  // contrast guarantee. `evidence` resolved to #1f2024 and `lesson:proposed` to
+  // #162d2f on a #0a0e27 page: invisible. This asserts the class of bug is gone,
+  // for known types and for a type nobody has defined yet.
+  const renderer = new ThreeJSGraphRenderer();
+  const bg = { r: 0x0a, g: 0x0e, b: 0x27 };
+  const distanceFromBackground = (hex: string): number => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return Math.sqrt((r - bg.r) ** 2 + (g - bg.g) ** 2 + (b - bg.b) ** 2);
+  };
+
+  const known = [
+    "episode:verified", "episode:failed", "episode:abandoned", "episode:open",
+    "lesson:proposed", "lesson:qualified", "lesson:approved",
+    "lesson:contradicted", "lesson:revoked", "evidence",
+  ];
+  const palette = renderer.generateColorPalette(new Set(known));
+  for (const type of known) {
+    const color = palette[type]!;
+    assert.match(color, /^#[0-9a-f]{6}$/i, `${type} has a colour`);
+    assert.ok(distanceFromBackground(color) > 90, `${type} (${color}) must not vanish into the background`);
+  }
+
+  // Distinctness: two types must not be given the same colour.
+  assert.equal(new Set(Object.values(palette)).size, known.length, "every type is distinguishable");
+
+  // And the fallback for unknown types varies hue only, so it is always legible.
+  for (const invented of ["architecture:module", "doc:section", "zzz", "a", "artifact:file"]) {
+    const color = deterministicColor(invented);
+    assert.ok(
+      distanceFromBackground(color) > 90,
+      `an unforeseen type (${invented} -> ${color}) must still be visible`,
+    );
+  }
+});
+
+test("the html export is self-contained and pins every external script", () => {
   const { memory } = seeded();
   const dir = mkdtempSync(join(tmpdir(), "mgm-graph-"));
   const out = join(dir, "nested", "graph.html");
@@ -128,7 +175,12 @@ test("the html export is self-contained and pins its one external script", () =>
   assert.match(html, /<!DOCTYPE html>/);
   assert.match(html, /demo title/);
   const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(scripts, ["https://unpkg.com/3d-force-graph@1"], "exactly one, pinned");
+  assert.deepEqual(scripts, [...EXTERNAL_SCRIPTS], "only the declared externals");
+  // The point is the pin, not the count: an unpinned CDN reference means a
+  // rendered file's behaviour changes whenever upstream publishes.
+  for (const src of scripts) {
+    assert.match(String(src), /@\d+(\.\d+)*$/, `${src} must be pinned to a version`);
+  }
 });
 
 test("graph content is html-escaped rather than interpolated raw", () => {
@@ -230,7 +282,7 @@ test("the json export names its edge vocabulary and round-trips", () => {
   const projection = exportGraphJson(memory, out);
 
   const parsed = JSON.parse(readFileSync(out, "utf8"));
-  assert.equal(parsed.schemaVersion, 1);
+  assert.equal(parsed.schemaVersion, 2, "2 since nodes carry `cluster`");
   assert.deepEqual(parsed.scope, { workspace: "multi-app", projectId: "build-demo" });
   assert.deepEqual(parsed.edgeKinds, [...EDGE_KINDS]);
   assert.equal(parsed.nodes.length, projection.graphData.nodes.length);
@@ -248,5 +300,43 @@ test("an empty cluster renders rather than crashing", () => {
   const dir = mkdtempSync(join(tmpdir(), "mgm-graph-"));
   const out = join(dir, "graph.html");
   exportGraphHtml(memory, out);
-  assert.match(readFileSync(out, "utf8"), /N: 0 \| E: 0/);
+  assert.match(readFileSync(out, "utf8"), /0 nodes .{1,8} 0 edges/);
+});
+
+test("clusters group one causal story, and are numbered deterministically", () => {
+  const storage = new MemoryStorageAdapter();
+  const memory = new GraphMemory({ storage, scope: { workspace: "multi-app", projectId: "clusters" } });
+
+  // Story one: an episode that produced a lesson citing evidence.
+  const first = memory.openEpisode({ objective: "first story", baseRevisionId: "rev-1" });
+  const evidence = memory.recordEvidence({ kind: "verification.result", ref: "run://1" });
+  memory.closeEpisode(first.id, "failed");
+  memory.proposeLesson({
+    trigger: "story one trigger",
+    recommendation: "story one recommendation",
+    scope: ["build"], domain: "build",
+    sourceEpisodeIds: [first.id], evidenceIds: [evidence.id],
+  });
+
+  // Story two: an unrelated episode that touches none of the above.
+  const lonely = memory.openEpisode({ objective: "unrelated attempt", baseRevisionId: "rev-9" });
+  memory.closeEpisode(lonely.id, "abandoned");
+
+  const { graphData } = projectGraph(memory);
+  const clusterOf = (id: string) => graphData.nodes.find((n) => n.id === id)?.cluster;
+
+  assert.equal(clusterOf(first.id), clusterOf(evidence.id), "one story is one cluster");
+  assert.notEqual(clusterOf(first.id), clusterOf(lonely.id), "unconnected work is a separate cluster");
+
+  // The largest component is always 0, so the numbering does not shuffle between
+  // runs -- the HTML export is asserted byte-for-byte elsewhere.
+  assert.equal(clusterOf(first.id), 0, "the largest component is cluster 0");
+  assert.equal(clusterOf(lonely.id), 1);
+
+  const again = projectGraph(memory);
+  assert.deepEqual(
+    again.graphData.nodes.map((n) => n.cluster),
+    graphData.nodes.map((n) => n.cluster),
+    "cluster ids are stable across runs",
+  );
 });

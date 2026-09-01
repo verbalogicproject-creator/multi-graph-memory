@@ -105,6 +105,63 @@ function describeEvidence(evidence: Evidence): string {
 }
 
 /**
+ * Connected components, written onto each node as `cluster`.
+ *
+ * In this graph a component is not an arbitrary grouping: an episode, the lesson
+ * it produced, the evidence that lesson cites and the later episode that reused
+ * it are one causal story. Separate components are separate stories that have
+ * never met. That is what makes "highlight this cluster" a useful question and
+ * not just a colouring exercise.
+ *
+ * Ids are assigned deterministically -- largest component first, ties broken by
+ * the smallest member id -- because the HTML export is asserted byte-for-byte in
+ * the tests, and an ordering that depended on Map iteration would make the same
+ * data render differently on different runs.
+ */
+export function assignClusters(nodes: Map<string, VisNode>, edges: readonly VisEdge[]): void {
+  const parent = new Map<string, string>();
+  for (const id of nodes.keys()) parent.set(id, id);
+
+  const find = (id: string): string => {
+    let root = id;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    // Path compression, so a long chain does not make later lookups quadratic.
+    let cursor = id;
+    while (parent.get(cursor) !== root) {
+      const next = parent.get(cursor)!;
+      parent.set(cursor, root);
+      cursor = next;
+    }
+    return root;
+  };
+
+  for (const edge of edges) {
+    const a = find(edge.source);
+    const b = find(edge.target);
+    if (a !== b) parent.set(a, b);
+  }
+
+  const members = new Map<string, string[]>();
+  for (const id of nodes.keys()) {
+    const root = find(id);
+    const list = members.get(root);
+    if (list) list.push(id);
+    else members.set(root, [id]);
+  }
+
+  const ordered = [...members.values()].sort((a, b) => {
+    if (a.length !== b.length) return b.length - a.length;
+    const aMin = [...a].sort()[0]!;
+    const bMin = [...b].sort()[0]!;
+    return aMin < bMin ? -1 : aMin > bMin ? 1 : 0;
+  });
+
+  ordered.forEach((group, index) => {
+    for (const id of group) nodes.get(id)!.cluster = index;
+  });
+}
+
+/**
  * Builds the graph. Pure -- no filesystem, no renderer instantiation beyond the
  * colour palette, so it can be asserted on directly in tests.
  */
@@ -167,6 +224,8 @@ export function projectGraph(source: GraphSource, now: Date = new Date()): Graph
     node.val = Math.log((degree.get(node.id) ?? 0) + 2) * 5;
   }
 
+  assignClusters(nodes, edges);
+
   const graphData: GraphData = {
     nodes: Array.from(nodes.values()),
     edges,
@@ -197,7 +256,8 @@ export function projectGraph(source: GraphSource, now: Date = new Date()): Graph
 export function serializeGraph(projection: GraphProjection): string {
   return `${JSON.stringify(
     {
-      schemaVersion: 1,
+      // 2: nodes carry `cluster`, the connected-component index.
+      schemaVersion: 2,
       scope: projection.scope,
       generatedAt: projection.generatedAt,
       counts: projection.counts,
