@@ -105,6 +105,14 @@ test("an unknown --build is refused by name, and creates nothing", async () => {
 
     // The positive control: the guard must not have broken the working case.
     assert.equal(await main(["--build", "real", "episode", "list"]), 0);
+
+    // Nor the one workflow that legitimately populates a cluster that does not
+    // exist yet. It must get past the guard and fail on its own terms (no bundle
+    // at that path) rather than on "no such build".
+    errors.length = 0;
+    await main(["--build", "restored", "sync", "import", join(dir, "no-such-bundle.json")]);
+    assert.doesNotMatch(errors.join("\n"), /No database for build/,
+        "sync import is how a bundle is restored into a new cluster");
   } finally {
     console.error = realError;
     console.log = realLog;

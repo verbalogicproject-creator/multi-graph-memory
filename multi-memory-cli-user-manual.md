@@ -111,8 +111,9 @@ Or point at a file directly — a backup, or a database someone sent you:
 mm --database /tmp/demo-1-backup.db lesson list
 ```
 
-`--database` is *not* guarded this way: it names a file you chose, and creating
-one is sometimes the point (importing a bundle into a new cluster).
+Two things are deliberately *not* guarded this way: `--database`, which names a
+file you chose, and `sync import`, which is how a bundle is restored **into** a
+cluster that does not exist yet.
 
 With `--database`, the project id is read from **inside** the file rather than from
 its name. A backup called `demo-1-backup.db` still holds records scoped to

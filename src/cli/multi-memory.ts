@@ -708,14 +708,17 @@ const NEARBY_BUILDS = 8;
  * nothing — and leave an empty file behind as a souvenir. A build id names
  * something that either exists or does not, and saying which is cheap.
  *
- * Only `--build` is guarded. `--database` names a file the caller chose, and
- * creating one is sometimes the point (importing a bundle into a new cluster).
+ * `--database` is not guarded: it names a file the caller chose. Nor is
+ * `sync import`, which is how a bundle is restored INTO a cluster that does not
+ * exist yet — a guard that refused that would have traded one silent failure for
+ * a loud broken workflow.
  */
 function unresolvableBuild(args: ParsedArgs, overrides: Partial<CliConfig>): string | null {
   const build = flagString(args.flags, "build");
   // Without a resolved per-build path, `--build` selects a project inside a shared
   // database, and "does this file exist" is not the question being asked.
   if (!build || !overrides.databasePath || existsSync(overrides.databasePath)) return null;
+  if (args.command === "sync" && args.sub === "import") return null;
 
   const dir = overrides.clusterDir ?? dirname(overrides.databasePath);
   let nearby: string[] = [];

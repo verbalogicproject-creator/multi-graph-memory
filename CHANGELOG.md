@@ -21,8 +21,10 @@ had in fact been rejected.
   SQLite database creates it, so a mistyped build id answered "No episodes
   recorded" — indistinguishable from a build that genuinely recorded nothing — and
   left an empty file behind. It now refuses by name, lists the ids that do exist,
-  and exits 1 having created nothing. `--database` is deliberately not guarded: it
-  names a file the caller chose, and creating one is sometimes the point.
+  and exits 1 having created nothing. Two exemptions, both deliberate:
+  `--database` names a file the caller chose, and `sync import` is how a bundle is
+  restored *into* a cluster that does not exist yet — guarding that would have
+  traded one silent failure for a loud broken workflow.
 
 Covered by `test/refusals.test.ts`, including that the guard runs *before*
 anything is opened, and that the working case still works. 219 tests.
