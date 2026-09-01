@@ -80,6 +80,19 @@ rather than forking the attempt, which puts the burden on closing rather than on
 not-opening-twice — the consumer closes on every terminal path and closes
 orphans at startup.
 
+**The ladder has no entrance from inside this package.** `INJECTABLE_STATUSES` is
+`["approved", "qualified"]`, so `queryContext` never surfaces a `proposed` lesson
+— which means it is never applied, which means `recordReuse` can never accept it,
+which means it can never become `qualified`. Read as a bug this is fatal; read as
+a design it is this package declining to decide, and `recordAppliedLesson`
+accepting any lesson id regardless of status is the seam left for a host that
+does decide. multi-app now uses that seam: at most three proposals, only about
+the issue codes that just failed, in a separately-labelled block that says in the
+prompt that they are unproven, each recorded as applied so the later reuse claim
+is checkable. Worth stating in this package's own docs, because a host that reads
+only the status ladder will build a proposer, watch nothing ever qualify, and have
+no way to tell whether it is broken or simply has nothing to learn.
+
 ## Working material that is not in git
 
 `/root/projects/kg-rag-cookbook/ideas/` is gitignored by request. It holds
