@@ -32,6 +32,19 @@ export const facetsSchema = z.object({
   triggerTags: z.array(z.string().min(1).max(200)).max(64).optional(),
 });
 
+/**
+ * Schema version 2. Every field optional and non-empty when present: an empty
+ * string is refused rather than stored, because "" and absent would otherwise be
+ * two spellings of the same unknown and would derive two different event ids.
+ */
+export const attributionSchema = z.object({
+  provider: identifier.optional(),
+  model: identifier.optional(),
+  surface: identifier.optional(),
+});
+
+export const episodeAttributionSchema = attributionSchema.pick({ provider: true, model: true });
+
 /** JSON-compatible payload. Rejects anything canonicalization could not reproduce. */
 export const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([
@@ -45,6 +58,7 @@ export const jsonValue: z.ZodType<unknown> = z.lazy(() =>
 );
 
 export const memoryEventInputSchema = facetsSchema.extend({
+  ...attributionSchema.shape,
   kind: z.enum(MEMORY_EVENT_KINDS),
   occurredAt: isoDateTime,
   projectId: identifier,
@@ -64,6 +78,7 @@ export const memoryEventInputSchema = facetsSchema.extend({
 export const memoryEventSchema = memoryEventInputSchema.extend({ id: identifier });
 
 export const episodeSchema = z.object({
+  ...episodeAttributionSchema.shape,
   id: identifier,
   projectId: identifier,
   objective: shortText,

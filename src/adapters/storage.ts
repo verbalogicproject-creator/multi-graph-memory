@@ -37,6 +37,10 @@ export interface EventQuery {
   domain?: LessonDomain;
   /** Matched exactly. A record matches if it carries any of these tags. */
   triggerTags?: readonly string[];
+  /** Schema version 2 attribution, all matched exactly. */
+  provider?: string;
+  model?: string;
+  surface?: string;
   /** ISO-8601 lower bound, inclusive. */
   since?: string;
   limit?: number;

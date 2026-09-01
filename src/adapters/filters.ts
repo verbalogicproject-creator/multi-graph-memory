@@ -23,6 +23,9 @@ export function eventMatches(event: MemoryEvent, query: EventQuery): boolean {
   if (query.component !== undefined && event.component !== query.component) return false;
   if (query.domain !== undefined && event.domain !== query.domain) return false;
   if (query.triggerTags && !matchesTags(event.triggerTags, query.triggerTags)) return false;
+  if (query.provider !== undefined && event.provider !== query.provider) return false;
+  if (query.model !== undefined && event.model !== query.model) return false;
+  if (query.surface !== undefined && event.surface !== query.surface) return false;
   if (query.since !== undefined && event.occurredAt < query.since) return false;
   return true;
 }

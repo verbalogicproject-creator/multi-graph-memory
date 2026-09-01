@@ -223,3 +223,121 @@ test("refusals are reported with their code, not as raw stack traces", () => {
   const formatted = formatError(new GraphMemoryError("SCOPE_REQUIRED", "no scope"));
   assert.equal(formatted, "Refused [SCOPE_REQUIRED]: no scope");
 });
+
+/* ------------------------------------------- schema version 2: attribution -- */
+
+/**
+ * CLI/library parity for attribution. The engine gained provider/model/surface;
+ * if a human cannot filter on them without writing code, the capability exists
+ * only for the machine -- which is the failure mode this repo's doctrine names.
+ */
+
+function seedAttributed(context: ReturnType<typeof setup>["context"]) {
+  const m = context.memory;
+  const google = m.openEpisode({ objective: "google build", baseRevisionId: "rev-1" });
+  m.appendEvent({
+    kind: "planning.answer",
+    occurredAt: new Date().toISOString(),
+    projectId: m.scope.projectId,
+    cycleId: "c1", phaseId: "plan",
+    provider: "google", model: "gemini-3.7-flash", surface: "builder.plan",
+    payload: { pages: 5 }, evidenceIds: [], episodeId: google.id,
+  });
+  m.closeEpisode(google.id, "verified", undefined, { provider: "google", model: "gemini-3.7-flash" });
+
+  const anthropic = m.openEpisode({ objective: "anthropic build", baseRevisionId: "rev-2" });
+  m.appendEvent({
+    kind: "candidate.created",
+    occurredAt: new Date().toISOString(),
+    projectId: m.scope.projectId,
+    cycleId: "c2", phaseId: "generate",
+    provider: "anthropic", model: "claude-haiku-4-5", surface: "builder.generate",
+    payload: { files: 24 }, evidenceIds: [], episodeId: anthropic.id,
+  });
+  m.closeEpisode(anthropic.id, "failed", undefined, { provider: "anthropic", model: "claude-haiku-4-5" });
+}
+
+test("events are filterable by provider, model and surface from the CLI", async () => {
+  const { context, cleanup } = setup();
+  try {
+    seedAttributed(context);
+
+    const all = await run("events --json", context);
+    assert.equal(JSON.parse(all).length, 2);
+
+    const anthropic = JSON.parse(await run("events --provider anthropic --json", context));
+    assert.equal(anthropic.length, 1);
+    assert.equal(anthropic[0].model, "claude-haiku-4-5");
+
+    const byModel = JSON.parse(await run("events --model gemini-3.7-flash --json", context));
+    assert.equal(byModel.length, 1);
+    assert.equal(byModel[0].surface, "builder.plan");
+
+    const bySurface = JSON.parse(await run("events --surface builder.generate --json", context));
+    assert.equal(bySurface.length, 1);
+
+    assert.equal(JSON.parse(await run("events --provider nvidia --json", context)).length, 0);
+    assert.match(await run("events --provider nvidia", context), /No events match/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("episode list shows and filters on attribution", async () => {
+  const { context, cleanup } = setup();
+  try {
+    seedAttributed(context);
+
+    const listed = await run("episode list", context);
+    assert.match(listed, /google\/gemini-3\.7-flash/);
+    assert.match(listed, /anthropic\/claude-haiku-4-5/);
+
+    const filtered = JSON.parse(await run("episode list --provider google --json", context));
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0].objective, "google build");
+  } finally {
+    cleanup();
+  }
+});
+
+test("an unattributed record reads as unattributed rather than as a provider", async () => {
+  const { context, cleanup } = setup();
+  try {
+    const m = context.memory;
+    const ep = m.openEpisode({ objective: "no attribution", baseRevisionId: "rev-1" });
+    m.closeEpisode(ep.id, "verified");
+
+    assert.match(await run("episode list", context), /unattributed/);
+    assert.equal(JSON.parse(await run("episode list --provider google --json", context)).length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("attribution counts what was produced, and stays counts", async () => {
+  const { context, cleanup } = setup();
+  try {
+    seedAttributed(context);
+
+    const rows = JSON.parse(await run("attribution --json", context));
+    const google = rows.find((r: { producer: string }) => r.producer === "google/gemini-3.7-flash");
+    const anthropic = rows.find((r: { producer: string }) => r.producer === "anthropic/claude-haiku-4-5");
+
+    assert.equal(google.events, 1);
+    assert.equal(google.verified, 1);
+    assert.equal(anthropic.failed, 1);
+
+    // It reports observations, and says so rather than ranking providers.
+    const text = await run("attribution", context);
+    assert.match(text, /Counts only/);
+    assert.doesNotMatch(text, /best|worst|recommend/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test("the help text advertises every attribution surface it implements", () => {
+  for (const fragment of ["events", "--provider", "--model", "--surface", "attribution"]) {
+    assert.ok(HELP.includes(fragment), `HELP must mention ${fragment}`);
+  }
+});

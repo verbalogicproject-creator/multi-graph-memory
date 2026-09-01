@@ -1,5 +1,65 @@
 # Changelog
 
+## [Unreleased]
+
+### Added — schema version 2: provider and model attribution
+
+The host became multi-provider (Google, Anthropic, OpenAI, NVIDIA behind one
+adapter interface), so "that step failed" stopped being a complete record. Without
+naming the producer, four providers' outcomes average into one blur and no
+per-provider claim is checkable afterwards.
+
+- `Attribution` on `MemoryEvent` (`provider`, `model`, `surface`) and on `Episode`
+  (`provider`, `model` — an episode spans surfaces, so it has no single one).
+  Every field optional: attribution is evidence when present, never a precondition.
+- Set on an episode at **close**, not at open: under a fallback chain the model that
+  actually served is only known afterwards. A value recorded at open is never
+  overwritten by a later one; absent fields are filled per field.
+- `EventQuery` gains `provider` / `model` / `surface`, matched exactly, in the SQL
+  narrowing and in the shared JS predicate both — so the projection and the system
+  of record cannot disagree.
+- Empty strings are refused rather than stored: `""` and absent would otherwise be
+  two spellings of the same unknown, and would derive two different event ids.
+- Attribution does not change episode identity (the same attempt is the same episode
+  either way) but **does** participate in event identity, so the same call served by
+  two providers is honestly two records.
+
+### Added — CLI parity for attribution
+- `multi-memory events [--kind|--episode|--provider|--model|--surface|--component|--since|--limit]`
+  — the event journal was previously reachable only from code.
+- `multi-memory episode list [--provider P] [--model M]`, and the list now prints the
+  producer (or `unattributed`).
+- `multi-memory attribution` — events and episode outcomes counted per producer.
+  It reports observations and says so; it does not rank providers.
+
+### Migration
+- `CURRENT_SCHEMA_VERSION` 1 → 2; `SUPPORTED_SCHEMA_VERSIONS` `[1, 2]`.
+- Bundle ladder: a real 1 → 2 step whose transform is identity, because version 2 only
+  adds optional fields. Nothing is back-filled — inventing an attribution for a record
+  written before attribution existed would manufacture evidence.
+- On-disk ladder in `SqliteStorageAdapter.open()`: additive `ALTER TABLE`, guarded by a
+  `PRAGMA table_info` presence check rather than a try/catch, so "already applied" and
+  "failed" stay distinguishable and a genuine failure still throws.
+- **Fixed while testing the ladder:** the version-2 index was declared in `SCHEMA`, which
+  runs before the ladder adds its column — opening any existing version-1 database failed
+  outright with `no such column: provider`. Indexes over new columns are now created after
+  the version is resolved. Found by the hand-built v1 fixture, not by review.
+
+### Added — concurrency
+- `PRAGMA busy_timeout` (default 2000 ms, `SqliteOptions.busyTimeoutMs`). This store has two
+  legitimate writers — a host server holding a long-lived connection and the human CLI
+  approving a lesson — and without a timeout the second fails instantly on any overlap.
+
+### Tests
+- `test/attribution.test.ts` (11) — validation, identity stability for pre-v2 events,
+  filtering, and the fill-never-overwrite rule at close.
+- `test/adapter.sqlite.migration.test.ts` (5) — a hand-built **real v1 database** upgraded on
+  open, legacy ids and field absence preserved, attributed writes afterwards surviving a
+  reopen, and an interrupted migration (columns present, version lagging) re-running cleanly.
+- `test/cli.surface.test.ts` (+5) — CLI filters, `unattributed` rendering, and a check that
+  `HELP` advertises every attribution surface actually implemented.
+- Suite: 193 tests, 188 passing, 5 skipped (live-API), 0 failing. `verify:pure` still green.
+
 ## [0.2.0] — 2026-09-01
 
 Retargeted from Verbalogix Fractal to the multi-app builder, in place. The governance

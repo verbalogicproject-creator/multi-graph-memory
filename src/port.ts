@@ -17,7 +17,7 @@
  */
 
 import { appendEvent, queryEvents, type AppendResult } from "./core/events.ts";
-import { closeEpisode, getEpisode, listEpisodes, openEpisode, recordAppliedLesson, type OpenEpisodeInput } from "./core/episodes.ts";
+import { closeEpisode, getEpisode, listEpisodes, openEpisode, recordAppliedLesson, type EpisodeAttribution, type OpenEpisodeInput } from "./core/episodes.ts";
 import { getEvidence, listEvidence, recordEvidence, type EvidenceInput } from "./core/evidence.ts";
 import {
   approveLesson,
@@ -103,8 +103,13 @@ export class GraphMemory {
     return openEpisode(this.storage, { ...input, projectId: this.scope.projectId });
   }
 
-  closeEpisode(episodeId: string, outcome: EpisodeOutcome, closedAt?: string): Episode {
-    return closeEpisode(this.storage, episodeId, outcome, closedAt);
+  closeEpisode(
+    episodeId: string,
+    outcome: EpisodeOutcome,
+    closedAt?: string,
+    attribution?: EpisodeAttribution,
+  ): Episode {
+    return closeEpisode(this.storage, episodeId, outcome, closedAt, attribution);
   }
 
   recordAppliedLesson(episodeId: string, lessonId: string): Episode {

@@ -54,6 +54,21 @@
               "maxLength": 200
             }
           },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "surface": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -159,6 +174,16 @@
       "items": {
         "type": "object",
         "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
           "id": {
             "type": "string",
             "minLength": 1,

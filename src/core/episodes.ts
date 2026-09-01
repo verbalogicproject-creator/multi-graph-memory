@@ -11,8 +11,11 @@ import { deriveEpisodeId } from "./canonical.ts";
 import { refuse } from "./errors.ts";
 import { episodeSchema } from "./schema.ts";
 import { assertProjectMatch, requireScope } from "./scope.ts";
-import type { Episode, EpisodeOutcome, ProjectScope } from "./types.ts";
+import type { Attribution, Episode, EpisodeOutcome, ProjectScope } from "./types.ts";
 import type { StorageAdapter, StorageTx } from "../adapters/storage.ts";
+
+/** provider/model only; an episode has no single surface. */
+export type EpisodeAttribution = Pick<Attribution, "provider" | "model">;
 
 export interface OpenEpisodeInput {
   projectId: string;
@@ -20,6 +23,26 @@ export interface OpenEpisodeInput {
   baseRevisionId: string;
   contractVersion?: number;
   openedAt?: string;
+  /**
+   * Usually absent here and supplied at close instead: under a fallback chain
+   * the model that actually served is not known when the episode opens.
+   */
+  attribution?: EpisodeAttribution;
+}
+
+/**
+ * Spreads only the fields that are actually present.
+ *
+ * Absence and `undefined` must not become two different stored shapes: the
+ * SQLite adapter decodes a NULL column back to an ABSENT key, so writing an
+ * explicit `undefined` here would make a round-trip change the record.
+ */
+export function spreadAttribution(attribution: EpisodeAttribution | undefined): EpisodeAttribution {
+  if (!attribution) return {};
+  return {
+    ...(attribution.provider === undefined ? {} : { provider: attribution.provider }),
+    ...(attribution.model === undefined ? {} : { model: attribution.model }),
+  };
 }
 
 export function openEpisodeTx(tx: StorageTx, input: OpenEpisodeInput): Episode {
@@ -30,6 +53,9 @@ export function openEpisodeTx(tx: StorageTx, input: OpenEpisodeInput): Episode {
     objective: input.objective,
     baseRevisionId: input.baseRevisionId,
     ...(input.contractVersion === undefined ? {} : { contractVersion: input.contractVersion }),
+    // Deliberately not part of `deriveEpisodeId`: the same attempt is the same
+    // episode whether or not the caller could name the model that served it.
+    ...spreadAttribution(input.attribution),
     openedAt,
     appliedLessonIds: [],
   };
@@ -60,11 +86,18 @@ export function requireEpisode(tx: StorageTx, episodeId: string): Episode {
   return episode;
 }
 
+/**
+ * `attribution` is accepted here because a fallback chain only resolves during
+ * the attempt: the model named at close is the one that actually served, which
+ * is the only one worth recording. Supplied values never overwrite an
+ * attribution already carried by the episode.
+ */
 export function closeEpisode(
   storage: StorageAdapter,
   episodeId: string,
   outcome: EpisodeOutcome,
   closedAt?: string,
+  attribution?: EpisodeAttribution,
 ): Episode {
   return storage.transact((tx) => {
     const episode = requireEpisode(tx, episodeId);
@@ -75,7 +108,20 @@ export function closeEpisode(
         outcome: episode.outcome,
       });
     }
-    const closed: Episode = { ...episode, closedAt: closedAt ?? new Date().toISOString(), outcome };
+    // Fill per field, never overwrite: an attribution recorded at open was
+    // observed earlier and is not improved by a later guess.
+    const supplied = spreadAttribution(attribution);
+    const closed: Episode = {
+      ...episode,
+      ...(episode.provider === undefined && supplied.provider !== undefined
+        ? { provider: supplied.provider }
+        : {}),
+      ...(episode.model === undefined && supplied.model !== undefined
+        ? { model: supplied.model }
+        : {}),
+      closedAt: closedAt ?? new Date().toISOString(),
+      outcome,
+    };
     tx.putEpisode(closed);
     return closed;
   });

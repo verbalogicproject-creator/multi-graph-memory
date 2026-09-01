@@ -9,7 +9,7 @@ import {
   serializeBundle,
   validateBundle,
 } from "../src/core/portability.ts";
-import { planMigration } from "../src/core/migrate.ts";
+import { CURRENT_SCHEMA_VERSION, planMigration } from "../src/core/migrate.ts";
 import { listLessons } from "../src/core/lessons.ts";
 import { event, makeStorage, PROJECT, reuseEpisode, seedProposedLesson, T2 } from "./helpers/factory.ts";
 import { recordReuse } from "../src/core/lessons.ts";
@@ -30,7 +30,7 @@ test("export is single-project and round-trips into a fresh store", () => {
   const bundle = exportProject(s.storage, { projectId: PROJECT }, T2);
 
   assert.equal(bundle.projectId, PROJECT);
-  assert.equal(bundle.schemaVersion, 1);
+  assert.equal(bundle.schemaVersion, CURRENT_SCHEMA_VERSION);
   assert.match(bundle.checksum, /^[0-9a-f]{64}$/);
 
   const fresh = makeStorage();
@@ -66,8 +66,10 @@ test("an unsupported schema version is refused, with a valid checksum", () => {
   const s = seedFull();
   const bundle = exportProject(s.storage, { projectId: PROJECT }, T2);
   // Recompute the checksum for the bumped version so the VERSION check is what
-  // fires, not the integrity check standing in for it.
-  const bumped = { ...bundle, schemaVersion: 2 };
+  // fires, not the integrity check standing in for it. One past current: a
+  // version this build has never heard of, rather than a literal that silently
+  // becomes supported the next time the schema moves.
+  const bumped = { ...bundle, schemaVersion: CURRENT_SCHEMA_VERSION + 1 };
   const valid = { ...bumped, checksum: computeBundleChecksum(bumped) };
 
   assert.throws(

@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS events (
   component             TEXT,
   domain                TEXT,
   trigger_tags          TEXT,
+  provider              TEXT,
+  model                 TEXT,
+  surface               TEXT,
   payload               TEXT NOT NULL,
   evidence_ids          TEXT NOT NULL
 );
@@ -58,6 +61,8 @@ CREATE TABLE IF NOT EXISTS episodes (
   opened_at         TEXT NOT NULL,
   closed_at         TEXT,
   outcome           TEXT,
+  provider          TEXT,
+  model             TEXT,
   applied_lesson_ids TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_episodes_project ON episodes(project_id, opened_at DESC);
@@ -144,6 +149,9 @@ function decodeEvent(row: Row): MemoryEvent {
   put(event, "supersedesEventId", row.supersedes_event_id);
   put(event, "component", row.component);
   put(event, "domain", row.domain);
+  put(event, "provider", row.provider);
+  put(event, "model", row.model);
+  put(event, "surface", row.surface);
   if (row.trigger_tags !== null && row.trigger_tags !== undefined) {
     event.triggerTags = parseJson<string[]>(row.trigger_tags, []);
   }
@@ -162,6 +170,8 @@ function decodeEpisode(row: Row): Episode {
   put(episode, "contractVersion", row.contract_version);
   put(episode, "closedAt", row.closed_at);
   put(episode, "outcome", row.outcome);
+  put(episode, "provider", row.provider);
+  put(episode, "model", row.model);
   return episode as unknown as Episode;
 }
 
@@ -226,8 +236,8 @@ class SqliteTx implements StorageTx {
       .prepare(
         `INSERT INTO events (id, kind, occurred_at, project_id, cycle_id, phase_id, step_id,
            contract_version, base_revision_id, candidate_revision_id, episode_id, supersedes_event_id,
-           component, domain, trigger_tags, payload, evidence_ids)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           component, domain, trigger_tags, provider, model, surface, payload, evidence_ids)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         event.id, event.kind, event.occurredAt, event.projectId, event.cycleId, event.phaseId,
@@ -235,6 +245,7 @@ class SqliteTx implements StorageTx {
         event.candidateRevisionId ?? null, event.episodeId ?? null, event.supersedesEventId ?? null,
         event.component ?? null, event.domain ?? null,
         event.triggerTags === undefined ? null : json(event.triggerTags),
+        event.provider ?? null, event.model ?? null, event.surface ?? null,
         JSON.stringify(event.payload), json(event.evidenceIds),
       );
     return true;
@@ -250,6 +261,9 @@ class SqliteTx implements StorageTx {
     if (query.episodeId !== undefined) { clauses.push("episode_id = ?"); params.push(query.episodeId); }
     if (query.component !== undefined) { clauses.push("component = ?"); params.push(query.component); }
     if (query.domain !== undefined) { clauses.push("domain = ?"); params.push(query.domain); }
+    if (query.provider !== undefined) { clauses.push("provider = ?"); params.push(query.provider); }
+    if (query.model !== undefined) { clauses.push("model = ?"); params.push(query.model); }
+    if (query.surface !== undefined) { clauses.push("surface = ?"); params.push(query.surface); }
     if (query.since !== undefined) { clauses.push("occurred_at >= ?"); params.push(query.since); }
 
     const rows = this.db
@@ -275,15 +289,17 @@ class SqliteTx implements StorageTx {
     this.db
       .prepare(
         `INSERT INTO episodes (id, project_id, objective, base_revision_id, contract_version,
-           opened_at, closed_at, outcome, applied_lesson_ids)
-         VALUES (?,?,?,?,?,?,?,?,?)
+           opened_at, closed_at, outcome, provider, model, applied_lesson_ids)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET closed_at=excluded.closed_at, outcome=excluded.outcome,
+           provider=excluded.provider, model=excluded.model,
            applied_lesson_ids=excluded.applied_lesson_ids`,
       )
       .run(
         episode.id, episode.projectId, episode.objective, episode.baseRevisionId,
         episode.contractVersion ?? null, episode.openedAt, episode.closedAt ?? null,
-        episode.outcome ?? null, json(episode.appliedLessonIds),
+        episode.outcome ?? null, episode.provider ?? null, episode.model ?? null,
+        json(episode.appliedLessonIds),
       );
   }
 
@@ -379,6 +395,22 @@ class SqliteTx implements StorageTx {
 export interface SqliteOptions {
   /** ":memory:" for an ephemeral store. */
   path: string;
+  /**
+   * How long a write waits for a competing writer before failing, in ms.
+   *
+   * This store has two legitimate writers -- the host server holding a
+   * long-lived connection, and the human CLI approving a lesson. Without a
+   * timeout the second one fails instantly with SQLITE_BUSY on any overlap.
+   */
+  busyTimeoutMs?: number;
+}
+
+const DEFAULT_BUSY_TIMEOUT_MS = 2_000;
+
+/** Column names actually present on a table. Table names here are literals, never input. */
+function columnNames(db: DatabaseSync, table: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Row[];
+  return new Set(rows.map((row) => String(row.name)));
 }
 
 /**
@@ -398,11 +430,13 @@ export function toFtsQuery(raw: string): string {
 export class SqliteStorageAdapter implements StorageAdapter, LexicalIndex {
   readonly name = "sqlite";
   private readonly path: string;
+  private readonly busyTimeoutMs: number;
   private db: DatabaseSync | null = null;
   private depth = 0;
 
   constructor(options: SqliteOptions) {
     this.path = options.path;
+    this.busyTimeoutMs = options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS;
   }
 
   private handle(): DatabaseSync {
@@ -420,6 +454,7 @@ export class SqliteStorageAdapter implements StorageAdapter, LexicalIndex {
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.db.exec("PRAGMA synchronous = NORMAL;");
+    this.db.exec(`PRAGMA busy_timeout = ${Number(this.busyTimeoutMs)};`);
     this.db.exec(SCHEMA);
     try {
       this.db.exec(FTS_SCHEMA);
@@ -427,7 +462,43 @@ export class SqliteStorageAdapter implements StorageAdapter, LexicalIndex {
       // FTS5 is present in Node's bundled SQLite, but a build without it should
       // degrade to deterministic scanning rather than refusing to open at all.
     }
-    if (this.getSchemaVersion() === 0) this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
+
+    // A fresh file gets CURRENT directly: SCHEMA above already created every
+    // column. An existing file walks the ladder one step at a time.
+    const version = this.getSchemaVersion();
+    if (version === 0) this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
+    else if (version < CURRENT_SCHEMA_VERSION) this.upgradeFrom(version);
+
+    // Indexes over columns the ladder may have just added, and therefore only
+    // safe once every column exists. Keeping them in SCHEMA would make opening
+    // a v1 file fail on an index that references a column not yet added.
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_provider ON events(project_id, provider);");
+  }
+
+  /**
+   * The on-disk ladder.
+   *
+   * Every step checks what the table actually has rather than wrapping an ALTER
+   * in try/catch. A swallowed exception makes "already applied" and "failed"
+   * indistinguishable; a column-presence check makes the step idempotent AND
+   * lets a genuine failure throw, which is the whole point of having a ladder.
+   */
+  private upgradeFrom(version: number): void {
+    const db = this.handle();
+
+    if (version < 2) {
+      const eventColumns = columnNames(db, "events");
+      if (!eventColumns.has("provider")) db.exec("ALTER TABLE events ADD COLUMN provider TEXT");
+      if (!eventColumns.has("model")) db.exec("ALTER TABLE events ADD COLUMN model TEXT");
+      if (!eventColumns.has("surface")) db.exec("ALTER TABLE events ADD COLUMN surface TEXT");
+
+      const episodeColumns = columnNames(db, "episodes");
+      if (!episodeColumns.has("provider")) db.exec("ALTER TABLE episodes ADD COLUMN provider TEXT");
+      if (!episodeColumns.has("model")) db.exec("ALTER TABLE episodes ADD COLUMN model TEXT");
+
+    }
+
+    this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
   }
 
   close(): void {

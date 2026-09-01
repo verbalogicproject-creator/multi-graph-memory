@@ -22,7 +22,7 @@ import { ControlStore } from "../control/registry.ts";
 import { federatedQuery } from "../control/federation.ts";
 import { ensureClusterDir, loadConfig, type CliConfig } from "./config.ts";
 import { flagList, flagString, parseArgs, type ParsedArgs } from "./args.ts";
-import type { LessonDomain, LessonStatus } from "../core/types.ts";
+import type { LessonDomain, LessonStatus, MemoryEventKind } from "../core/types.ts";
 
 export const HELP = `
 multi-memory — governed episodic and lesson memory
@@ -36,8 +36,11 @@ multi-memory — governed episodic and lesson memory
   multi-memory lesson show <lessonId>
   multi-memory lesson approve <lessonId> --by <name>      (human only)
   multi-memory lesson revoke  <lessonId> --reason <text>  (human only)
-  multi-memory episode list
+  multi-memory episode list [--provider P] [--model M]
   multi-memory episode show <episodeId>
+  multi-memory events [--kind K] [--episode ID] [--provider P] [--model M]
+                      [--surface S] [--component C] [--since ISO] [--limit N] [--json]
+  multi-memory attribution                                who produced what, by provider
   multi-memory docs generate [--dir <path>]
   multi-memory docs ingest <file>
   multi-memory graph export <file.html|file.json>       3D graph, or nodes+edges
@@ -262,11 +265,22 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
 
     case "episode": {
       if (args.sub === "list") {
-        const episodes = memory.listEpisodes();
+        const provider = flagString(args.flags, "provider");
+        const model = flagString(args.flags, "model");
+        const episodes = memory.listEpisodes().filter(
+          (e) =>
+            (provider === undefined || e.provider === provider) &&
+            (model === undefined || e.model === model),
+        );
         if (asJson) return out(episodes, true);
         if (episodes.length === 0) return "No episodes recorded.";
         return episodes
-          .map((e) => `${(e.outcome ?? "open").padEnd(10)} ${e.openedAt}  ${e.id}\n           ${e.objective}`)
+          .map((e) => {
+            const by = e.provider === undefined && e.model === undefined
+              ? "unattributed"
+              : [e.provider, e.model].filter(Boolean).join("/");
+            return `${(e.outcome ?? "open").padEnd(10)} ${e.openedAt}  ${e.id}\n           ${e.objective}\n           ${by}`;
+          })
           .join("\n");
       }
       if (args.sub === "show") {
@@ -274,6 +288,77 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
         return episode ? out(episode, true) : "No such episode in this project.";
       }
       return "Usage: multi-memory episode list|show";
+    }
+
+    /**
+     * The event journal, filterable by the schema-version-2 attribution.
+     * Parity matters here: the same filters the host server can pass to
+     * `queryEvents` are reachable by a human without writing code.
+     */
+    case "events": {
+      const limit = Number(flagString(args.flags, "limit") ?? 40);
+      const events = memory.queryEvents({
+        ...(flagString(args.flags, "kind") === undefined
+          ? {}
+          : { kinds: [flagString(args.flags, "kind") as MemoryEventKind] }),
+        ...(flagString(args.flags, "episode") === undefined ? {} : { episodeId: flagString(args.flags, "episode")! }),
+        ...(flagString(args.flags, "provider") === undefined ? {} : { provider: flagString(args.flags, "provider")! }),
+        ...(flagString(args.flags, "model") === undefined ? {} : { model: flagString(args.flags, "model")! }),
+        ...(flagString(args.flags, "surface") === undefined ? {} : { surface: flagString(args.flags, "surface")! }),
+        ...(flagString(args.flags, "component") === undefined ? {} : { component: flagString(args.flags, "component")! }),
+        ...(flagString(args.flags, "since") === undefined ? {} : { since: flagString(args.flags, "since")! }),
+        limit: Number.isFinite(limit) && limit > 0 ? limit : 40,
+      });
+      if (asJson) return out(events, true);
+      if (events.length === 0) return "No events match.";
+      return events
+        .map((e) => {
+          const by = [e.provider, e.model].filter(Boolean).join("/") || "unattributed";
+          const where = e.surface ? ` ${e.surface}` : "";
+          return `${e.occurredAt}  ${e.kind.padEnd(22)} ${by}${where}\n  ${e.id}`;
+        })
+        .join("\n");
+    }
+
+    /**
+     * Who produced what. A count per provider/model, and how those attempts
+     * turned out -- the raw material for judging a provider on this project
+     * rather than on its own claims.
+     */
+    case "attribution": {
+      const events = memory.queryEvents({});
+      const episodes = memory.listEpisodes();
+
+      const byProducer = new Map<string, { events: number; verified: number; failed: number; open: number }>();
+      const bucket = (key: string) => {
+        const existing = byProducer.get(key);
+        if (existing) return existing;
+        const fresh = { events: 0, verified: 0, failed: 0, open: 0 };
+        byProducer.set(key, fresh);
+        return fresh;
+      };
+      const nameOf = (provider?: string, model?: string) =>
+        [provider, model].filter(Boolean).join("/") || "unattributed";
+
+      for (const e of events) bucket(nameOf(e.provider, e.model)).events += 1;
+      for (const ep of episodes) {
+        const slot = bucket(nameOf(ep.provider, ep.model));
+        if (ep.outcome === "verified") slot.verified += 1;
+        else if (ep.outcome === "failed") slot.failed += 1;
+        else if (ep.outcome === undefined) slot.open += 1;
+      }
+
+      const rows = [...byProducer.entries()].sort((a, b) => b[1].events - a[1].events);
+      if (asJson) return out(rows.map(([producer, counts]) => ({ producer, ...counts })), true);
+      if (rows.length === 0) return "Nothing recorded yet.";
+      return [
+        `${"producer".padEnd(34)} events  verified  failed  open`,
+        ...rows.map(([producer, c]) =>
+          `${producer.padEnd(34)} ${String(c.events).padStart(6)}  ${String(c.verified).padStart(8)}  ${String(c.failed).padStart(6)}  ${String(c.open).padStart(4)}`,
+        ),
+        "",
+        "Counts only. An outcome is what was observed, not a verdict on a provider.",
+      ].join("\n");
     }
 
     case "docs": {
@@ -358,10 +443,11 @@ const MENU = [
   ["2", "Ask memory a question", "ask"],
   ["3", "List lessons", "lesson list"],
   ["4", "List episodes", "episode list"],
-  ["5", "Approve a lesson (human)", "lesson approve"],
-  ["6", "Revoke a lesson (human)", "lesson revoke"],
-  ["7", "Generate project documents", "docs generate"],
-  ["8", "Doctor", "doctor"],
+  ["5", "Who produced what", "attribution"],
+  ["6", "Approve a lesson (human)", "lesson approve"],
+  ["7", "Revoke a lesson (human)", "lesson revoke"],
+  ["8", "Generate project documents", "docs generate"],
+  ["9", "Doctor", "doctor"],
   ["q", "Quit", ""],
 ] as const;
 

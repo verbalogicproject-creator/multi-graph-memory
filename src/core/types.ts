@@ -112,9 +112,33 @@ export interface Facets {
   triggerTags?: string[];
 }
 
+/* ------------------------------------------------------------ attribution -- */
+
+/**
+ * Who produced a record.
+ *
+ * Schema version 2. A single-provider host could leave this implicit; a
+ * multi-provider one cannot. The builder that consumes this memory now serves
+ * the same step from Google, Anthropic, OpenAI or NVIDIA, and "that step failed"
+ * means something different depending on which model ran it. Without attribution
+ * the outcomes of four providers average into one indistinguishable blur, and no
+ * per-provider claim is checkable afterwards.
+ *
+ * Every field is optional: attribution is evidence when present, never a
+ * precondition, so a producer that does not know its own provider still records.
+ */
+export interface Attribution {
+  /** Provider family that served the call, e.g. "google", "anthropic". */
+  provider?: string;
+  /** Exact model id as the provider names it, e.g. "claude-haiku-4-5". */
+  model?: string;
+  /** Host surface that produced the record, e.g. "builder.plan". */
+  surface?: string;
+}
+
 /* ----------------------------------------------------------------- events -- */
 
-export interface MemoryEvent extends Facets {
+export interface MemoryEvent extends Facets, Attribution {
   /** Deterministic: SHA-256 over the canonical form of the identity fields. */
   id: string;
   kind: MemoryEventKind;
@@ -140,7 +164,13 @@ export type MemoryEventInput = Omit<MemoryEvent, "id"> & { id?: string };
 
 /* --------------------------------------------------------------- episodes -- */
 
-export interface Episode {
+/**
+ * An episode carries provider and model but not `surface`: one episode spans
+ * several surfaces (plan, directions, generate), while the serving model is a
+ * property of the attempt as a whole. It is set at close, not at open, because
+ * fallback means the model that actually served is only known afterwards.
+ */
+export interface Episode extends Pick<Attribution, "provider" | "model"> {
   id: string;
   projectId: string;
   /** The single objective this bounded sequence serves. */
