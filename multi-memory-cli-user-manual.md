@@ -75,31 +75,34 @@ Make it shorter for a session:
 alias mm='node /root/multi-graph-memory/bin/multi-memory.ts'
 ```
 
-### Pointing it at the build you want to look at  ⚠️ important
+### Pointing it at the build you want to look at
 
-The CLI has **no `--database` flag yet** (see [gap 1](#9-known-gaps-and-bugs)). It finds its database from a config file in the folder you run it from.
-
-So to inspect one build, make a small folder for it once:
+Tell it where your build databases live, once per session:
 
 ```bash
-mkdir -p ~/look/plant-tracker && cd ~/look/plant-tracker
-
-cat > .multi-memory.json <<'EOF'
-{
-  "workspace": "multi-app",
-  "projectId": "PUT-THE-BUILD-ID-HERE",
-  "databasePath": "/root/multi-app/.multi-memory/PUT-THE-BUILD-ID-HERE.db"
-}
-EOF
-
-mm project status
+export MULTI_MEMORY_BUILDS=/root/multi-app/.multi-memory
 ```
 
-To look at a different build, edit `projectId` and `databasePath` in that file. Find build ids with:
+Then name a build from anywhere:
 
 ```bash
-ls /root/multi-app/.multi-memory/
+mm --build demo-1 project status
+mm --build demo-1 lesson list
+mm builds                          # which builds exist, how big, how old
 ```
+
+Or point at a file directly — a backup, or a database someone sent you:
+
+```bash
+mm --database /tmp/demo-1-backup.db lesson list
+```
+
+With `--database`, the project id is read from **inside** the file rather than from
+its name. A backup called `demo-1-backup.db` still holds records scoped to
+`demo-1`, and guessing from the filename would silently show you an empty database.
+
+Without either flag the CLI falls back to a `.multi-memory.json` in the folder you
+run from, which is handy if you want a fixed working directory per build.
 
 ---
 
@@ -378,6 +381,49 @@ The checksum covers everything. If a single character is edited, import refuses 
 
 ---
 
+### `mm backup <file.db>` — a safe copy while everything is running
+
+```bash
+mm --build demo-1 backup /tmp/demo-1-backup.db
+```
+
+```
+wrote /tmp/demo-1-backup.db
+  104.0 KiB, consistent as of now
+  Taken through the WAL, so unlike `cp` it is not a stale snapshot.
+```
+
+**Use this instead of `cp`.** Copying a `.db` while it is open gives you a stale
+file — recent changes are still in the `-wal` companion. This reads through the
+WAL and writes one complete file.
+
+---
+
+### `mm builds` — which builds have memory
+
+```
+/root/multi-app/.multi-memory
+  demo-1                             104 KiB     0.0 days old
+  fixcheck-1                         104 KiB     0.0 days old
+                               2 database(s), 0.2 MiB total
+```
+
+---
+
+### `mm prune --older-than <days>` — clean up old builds
+
+```bash
+mm prune --older-than 30            # shows what WOULD go
+mm prune --older-than 30 --apply    # actually deletes
+```
+
+Three safety rails, because deleting memory cannot be undone: it refuses without
+an explicit age, it shows rather than deletes unless you add `--apply`, and it
+removes the `-wal`/`-shm` companions with each database so SQLite never later
+finds a WAL with no database.
+
+---
+
 ### `mm` with no arguments — interactive menu
 
 ```
@@ -427,17 +473,39 @@ curl -s "localhost:8080/api/memory/state?buildId=demo-1" | python3 -m json.tool
 |---|---|---|
 | `POST` | `/api/memory/episodes/open` | start an attempt → returns `episodeId` |
 | `POST` | `/api/memory/episodes/close` | finish it with an outcome + attribution |
-| `POST` | `/api/memory/events` | report events and evidence (batched) |
+| `POST` | `/api/memory/events` | report events and evidence (batched; evidence is addressed by `key`) |
 | `GET` | `/api/memory/state?buildId=` | health + one build's contents |
 | `POST` | `/api/memory/lessons/:id/approve` | human approval (`approvedBy` required) |
 
-Example:
+Example — open an attempt, then report a verdict with its proof:
 
 ```bash
 curl -s -X POST localhost:8080/api/memory/episodes/open \
   -H 'Content-Type: application/json' \
   -d '{"buildId":"demo-1","objective":"generate the app","baseRevisionId":"rev-1"}'
+
+curl -s -X POST localhost:8080/api/memory/events \
+  -H 'Content-Type: application/json' \
+  -d '{"buildId":"demo-1","episodeId":"epi_...",
+       "evidence":[{"key":"verdict","kind":"verification.result","ref":"validator://1"}],
+       "events":[{"kind":"verification.completed","evidenceKeys":["verdict"],
+                  "payload":{"ok":false},"domain":"build"}]}'
 ```
+
+**Evidence is addressed, never shared.** Each evidence item carries a `key`, and an
+event cites it by listing keys in `evidenceKeys`. An event that names none cites
+none. The response tells you exactly what landed and what did not:
+
+```json
+{ "accepted": 1,
+  "accepted_ids": [{"index": 0, "id": "evt_..."}],
+  "rejected": [{"index": 1, "kind": "made.up", "reason": "unknown event kind"}],
+  "evidenceIds": ["evd_..."] }
+```
+
+Opening the same attempt twice returns the **same** episode: a request matching an
+already-open episode's objective and base revision is treated as the same attempt,
+not a new one.
 
 **These routes always answer `200` with a shaped body, even when memory is broken.** A degraded memory is a fact the interface shows, never an error the builder has to survive.
 
@@ -511,40 +579,37 @@ Then: `mm doctor` → `mm lesson list` → `mm ask "imports failing"` → `mm le
 
 Honest list, worst first.
 
-### 1. The CLI cannot be pointed at a database from the command line
-There is no `--database` or `--build` flag. You must create a `.multi-memory.json` file in a folder and run from there ([section 4](#4-setting-up-the-cli)). **This is the most annoying thing about testing right now.** A `--build <id>` flag is a small fix.
+### 1. "A lesson was injected" is recorded as "a lesson was applied"
+When a lesson is put into a prompt, memory records it as *applied* to that episode.
+But the model may have read it and ignored it — there is no way to know from
+outside whether the advice was actually followed. This matters because "applied"
+is the precondition for counting a reuse. Step 5 of the current cycle tightens it:
+reuse is only counted when the build afterwards actually **passed**. Until then,
+read `reuse=1` as "was present, and the build passed", not "this is why it passed".
 
-### 2. "A lesson was injected" is recorded as "a lesson was applied"
-When a lesson is put into a prompt, memory records it as *applied* to that episode. But the model may have read it and ignored it. There is no way to know from outside whether the advice was actually followed. This matters because "applied" is the precondition for counting a reuse. The plan for step 5 tightens this — reuse is only counted when the build afterwards actually **passed**. Until then, treat `reuse=1` as "was present and the build passed", not "this is why it passed".
+### 2. Databases are never cleaned up automatically
+`mm prune` exists now, but nothing runs it for you. Every build makes a `.db` that
+lives until you remove it. Check with `mm builds`.
 
-### 3. Events sent in one batch share their evidence
-If the app reports two events and one piece of evidence together, **both** events end up citing that evidence. It is a simplification in the batching endpoint. Wrong attributions of proof are possible in a batch.
+### 3. Records written after the response can be lost
+Some events are written *after* the answer reaches the browser, deliberately, so
+memory is never in the way of your result. If the server is killed in that
+instant, that record is lost. Rare and harmless, but real.
 
-### 4. Unknown event kinds are dropped silently
-The events endpoint returns how many it accepted, not which it rejected. Send `{"kind":"nonsense"}` and you get `accepted: 0` with no explanation.
+### 4. Rebuilding the engine briefly interrupts a running server
+`npm run check` in the engine folder deletes and rebuilds `dist/`. A running app
+server reports memory unavailable for a few seconds, then recovers on its own
+(it retries every 30 seconds — no restart needed).
 
-### 5. Databases are never cleaned up
-Every build makes a `.db` file that lives forever. No retention, no pruning, no size limit. Ten builds a day for a month is 300 files.
+### 5. Many builds open at once can thrash the cache
+The bridge keeps at most 8 build databases open and closes the least recently
+used, though never the one a request is currently using. A view listing dozens of
+builds would open and close files repeatedly. Cheap, but not free.
 
-### 6. Records written after the response can be lost
-Some events are written *after* the answer is sent to the browser, deliberately, so memory is never in the way of your result. If the server is killed in that instant, that record is lost. Rare and harmless, but real.
-
-### 7. Rebuilding the engine briefly breaks a running server
-`npm run check` in the engine folder does `rm -rf dist` before rebuilding. If the app server is running, memory reports itself unavailable for a few seconds. It recovers on its own — no restart needed.
-
-### 8. Theoretical: closing a busy database
-The bridge keeps at most 8 build databases open and closes the oldest. If you had 9+ builds active at the same moment, a query in flight could hit a closed database. Practically impossible for one person; noted for honesty.
-
-### 9. Copying a `.db` file while the server runs loses recent writes
-The databases use WAL mode, so recent changes live in a companion `<name>.db-wal`
-file until they are folded in. `cp something.db elsewhere/` silently gives you a
-**stale** copy. Hit during testing: an approval and a whole lesson went missing.
-Copy all three files (`.db`, `.db-wal`, `.db-shm`) together, or better, stop the
-server first, or best, use `mm sync export` — which exists for exactly this and
-gives you a checksummed bundle.
-
-### 10. `npx multi-memory` needs a build first
-The published entry point is `dist/bin/multi-memory.js`. If `dist/` is missing, run `npm run build` in `/root/multi-graph-memory`. Running the source directly (`node bin/multi-memory.ts`) always works and needs no build.
+### 6. `npx multi-memory` needs a build first
+The published entry point is `dist/bin/multi-memory.js`. If `dist/` is missing, run
+`npm run build` in `/root/multi-graph-memory`. Running the source directly
+(`node bin/multi-memory.ts`) always works and needs no build.
 
 ---
 
@@ -558,7 +623,8 @@ The published entry point is `dist/bin/multi-memory.js`. If `dist/` is missing, 
 | `approvedBy is required` | approval with a blank name | supply a real name; an approval with no approver is not an approval |
 | `mm` finds a database you did not expect | it walked up to the nearest `package.json` or `.git` | create a `.multi-memory.json` where you want it |
 | Nothing is recorded when you use the app | the interface is not wired yet | expected — step 4 of this cycle |
-| A copied database is missing recent changes | WAL file left behind | copy `.db`, `.db-wal` and `.db-shm` together, or use `mm sync export` |
+| A copied database is missing recent changes | you used `cp` on a live database | use `mm backup <file>` instead — it reads through the WAL |
+| `mm` shows an empty database that should have data | pointed at the wrong file | run `mm project status`; the `database` line is the truth |
 
 ---
 
@@ -566,7 +632,10 @@ The published entry point is `dist/bin/multi-memory.js`. If `dist/` is missing, 
 
 ```bash
 alias mm='node /root/multi-graph-memory/bin/multi-memory.ts'
+export MULTI_MEMORY_BUILDS=/root/multi-app/.multi-memory
 
+mm builds                                  # which builds have memory
+mm --build demo-1 doctor                   # anything waiting on me, for one build
 mm doctor                                  # anything waiting for me?
 mm project status                          # where am I, how much is here
 mm lesson list --status qualified          # what needs my approval
@@ -578,7 +647,9 @@ mm attribution                             # who produced what
 mm ask "what breaks the build"             # what a model would be told
 mm ask "a calm dashboard" --direction      # ...with taste lessons barred
 mm graph export /tmp/m.html                # look at it
-mm sync export /tmp/backup.json            # back it up
+mm backup /tmp/demo-1.db                   # safe copy while running
+mm prune --older-than 30                   # show old builds (add --apply to delete)
+mm sync export /tmp/backup.json            # portable, checksummed bundle
 
 ls /root/multi-app/.multi-memory/          # which builds have memory
 curl -s localhost:8080/api/memory/state    # is memory alive
