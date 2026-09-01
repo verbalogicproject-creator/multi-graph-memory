@@ -12,7 +12,7 @@
  */
 
 import { deriveEventId } from "./canonical.ts";
-import { refuse } from "./errors.ts";
+import { refuse, refuseSchema } from "./errors.ts";
 import { assertRedactionBoundary, type GateOptions } from "./redaction.ts";
 import { memoryEventInputSchema } from "./schema.ts";
 import { assertProjectMatch, requireScope } from "./scope.ts";
@@ -33,9 +33,7 @@ export interface AppendOptions extends GateOptions {
 export function prepareEvent(input: MemoryEventInput, options: GateOptions = {}): MemoryEvent {
   const parsed = memoryEventInputSchema.safeParse(input);
   if (!parsed.success) {
-    refuse("VALIDATION_FAILED", "Event failed schema validation.", {
-      issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-    });
+    refuseSchema("Event", parsed.error.issues);
   }
 
   const { id: _supplied, ...body } = parsed.data;

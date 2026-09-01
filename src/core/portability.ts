@@ -22,7 +22,7 @@ import {
   deriveLessonId,
   sha256Hex,
 } from "./canonical.ts";
-import { refuse } from "./errors.ts";
+import { refuse, refuseSchema } from "./errors.ts";
 import { applyMigrations, CURRENT_SCHEMA_VERSION, planMigration, SUPPORTED_SCHEMA_VERSIONS } from "./migrate.ts";
 import { assertRedactionBoundary } from "./redaction.ts";
 import { exportBundleSchema } from "./schema.ts";
@@ -95,9 +95,7 @@ export interface ImportResult {
 export function validateBundle(raw: unknown): ExportBundle {
   const parsed = exportBundleSchema.safeParse(raw);
   if (!parsed.success) {
-    refuse("VALIDATION_FAILED", "Bundle failed schema validation.", {
-      issues: parsed.error.issues.slice(0, 20).map((i) => ({ path: i.path.join("."), message: i.message })),
-    });
+    refuseSchema("Bundle", parsed.error.issues.slice(0, 20));
   }
   const bundle = parsed.data as ExportBundle;
 

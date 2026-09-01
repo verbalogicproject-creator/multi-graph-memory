@@ -61,6 +61,48 @@ export function refuse(
   throw new GraphMemoryError(code, message, detail);
 }
 
+/**
+ * One validation issue, structurally shaped so this file needs no schema library.
+ * `path` is `PropertyKey[]` because that is what the validator produces — a
+ * segment can be a symbol, and stringifying is this file's job rather than every
+ * call site's.
+ */
+export interface SchemaIssue {
+  readonly path: readonly PropertyKey[];
+  readonly message: string;
+}
+
+/** Beyond this, a message stops informing and starts scrolling. */
+const ISSUES_IN_MESSAGE = 3;
+
+/**
+ * A schema refusal that names what was wrong, in the sentence.
+ *
+ * The issues were always in `detail`. But logging `error.message` and dropping
+ * the rest is the normal thing to do at a process boundary, and a consumer that
+ * did lost a whole class of events to one undeclared `domain` value — reported
+ * to it as a count, with the field never named. Which field, and which value,
+ * belongs where anyone will actually read it.
+ *
+ * `detail.issues` keeps every issue; the message shows the first few.
+ */
+export function refuseSchema(subject: string, issues: readonly SchemaIssue[]): never {
+  const named = issues.map((issue) => ({
+    path: issue.path.map((segment) => String(segment)).join("."),
+    message: issue.message,
+  }));
+  const shown = named
+    .slice(0, ISSUES_IN_MESSAGE)
+    .map((issue) => (issue.path ? `${issue.path}: ${issue.message}` : issue.message));
+  const hidden = named.length - shown.length;
+  const summary = shown.join("; ") + (hidden > 0 ? ` (+${hidden} more)` : "");
+  refuse(
+    "VALIDATION_FAILED",
+    summary ? `${subject} failed schema validation — ${summary}` : `${subject} failed schema validation.`,
+    { issues: named },
+  );
+}
+
 export function isGraphMemoryError(value: unknown): value is GraphMemoryError {
   return value instanceof GraphMemoryError;
 }

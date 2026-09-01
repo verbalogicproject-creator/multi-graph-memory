@@ -10,7 +10,7 @@
  */
 
 import readline from "node:readline/promises";
-import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { SqliteStorageAdapter } from "../adapters/sqlite.ts";
 import { GraphMemory } from "../port.ts";
@@ -697,11 +697,63 @@ export function overridesFromFlags(args: ParsedArgs): Partial<CliConfig> {
   return overrides;
 }
 
+/** How many sibling ids are worth printing before the list stops helping. */
+const NEARBY_BUILDS = 8;
+
+/**
+ * Why a `--build` cannot be answered, or null when it can.
+ *
+ * Opening a SQLite database creates it, so a mistyped build id used to answer
+ * "No episodes recorded" — indistinguishable from a run that genuinely recorded
+ * nothing — and leave an empty file behind as a souvenir. A build id names
+ * something that either exists or does not, and saying which is cheap.
+ *
+ * Only `--build` is guarded. `--database` names a file the caller chose, and
+ * creating one is sometimes the point (importing a bundle into a new cluster).
+ */
+function unresolvableBuild(args: ParsedArgs, overrides: Partial<CliConfig>): string | null {
+  const build = flagString(args.flags, "build");
+  // Without a resolved per-build path, `--build` selects a project inside a shared
+  // database, and "does this file exist" is not the question being asked.
+  if (!build || !overrides.databasePath || existsSync(overrides.databasePath)) return null;
+
+  const dir = overrides.clusterDir ?? dirname(overrides.databasePath);
+  let nearby: string[] = [];
+  try {
+    nearby = readdirSync(dir)
+      .filter((name) => name.endsWith(".db"))
+      .map((name) => name.replace(/\.db$/, ""))
+      .sort();
+  } catch {
+    return `No cluster directory at ${dir}. Set MULTI_MEMORY_BUILDS to where the databases live.`;
+  }
+
+  const lines = [`No database for build "${build}" in ${dir}.`];
+  if (nearby.length === 0) {
+    lines.push("That directory holds no databases at all.");
+  } else {
+    lines.push(`${nearby.length} there: ${nearby.slice(0, NEARBY_BUILDS).join(", ")}${
+      nearby.length > NEARBY_BUILDS ? ", …" : ""
+    }`);
+    lines.push("`multi-memory builds` lists them with sizes and ages.");
+  }
+  return lines.join("\n");
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
   const namedAFile = Boolean(flagString(args.flags, "database") ?? flagString(args.flags, "db"));
   const namedAProject = Boolean(flagString(args.flags, "build"));
-  const context = openMemory(overridesFromFlags(args), { inferProjectId: namedAFile && !namedAProject });
+
+  const overrides = overridesFromFlags(args);
+  // Before opening anything: opening is what would create it.
+  const unresolvable = unresolvableBuild(args, overrides);
+  if (unresolvable) {
+    console.error(unresolvable);
+    return 1;
+  }
+
+  const context = openMemory(overrides, { inferProjectId: namedAFile && !namedAProject });
 
   try {
     if (argv.length === 0) {

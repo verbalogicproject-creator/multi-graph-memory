@@ -91,11 +91,28 @@ mm --build demo-1 lesson list
 mm builds                          # which builds exist, how big, how old
 ```
 
+A build id that has no database is an error, not an empty list:
+
+```
+$ mm --build demo-2 episode list
+No database for build "demo-2" in /root/multi-app/.multi-memory.
+3 there: build-mtis8q1a-4f2p, build-mtitlp71-9kd3, demo-1
+`multi-memory builds` lists them with sizes and ages.
+```
+
+Opening a SQLite database creates it, so a typo used to answer "No episodes
+recorded" — which reads exactly like a build that ran and recorded nothing — and
+leave an empty file behind. Now it says which id it could not find and what is
+actually there.
+
 Or point at a file directly — a backup, or a database someone sent you:
 
 ```bash
 mm --database /tmp/demo-1-backup.db lesson list
 ```
+
+`--database` is *not* guarded this way: it names a file you chose, and creating
+one is sometimes the point (importing a bundle into a new cluster).
 
 With `--database`, the project id is read from **inside** the file rather than from
 its name. A backup called `demo-1-backup.db` still holds records scoped to

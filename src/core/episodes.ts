@@ -8,7 +8,7 @@
  */
 
 import { deriveEpisodeId } from "./canonical.ts";
-import { refuse } from "./errors.ts";
+import { refuse, refuseSchema } from "./errors.ts";
 import { episodeSchema } from "./schema.ts";
 import { assertProjectMatch, requireScope } from "./scope.ts";
 import type { Attribution, Episode, EpisodeOutcome, ProjectScope } from "./types.ts";
@@ -62,9 +62,7 @@ export function openEpisodeTx(tx: StorageTx, input: OpenEpisodeInput): Episode {
 
   const parsed = episodeSchema.safeParse(episode);
   if (!parsed.success) {
-    refuse("VALIDATION_FAILED", "Episode failed schema validation.", {
-      issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-    });
+    refuseSchema("Episode", parsed.error.issues);
   }
 
   const existing = tx.getEpisode(episode.id);

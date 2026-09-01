@@ -17,7 +17,7 @@
  */
 
 import { deriveLessonId } from "./canonical.ts";
-import { refuse } from "./errors.ts";
+import { refuse, refuseSchema } from "./errors.ts";
 import { assertRedactionBoundary } from "./redaction.ts";
 import { lessonProposalSchema } from "./schema.ts";
 import { assertProjectMatch, requireScope } from "./scope.ts";
@@ -64,9 +64,7 @@ function assertNoContradiction(lesson: Lesson, action: string): void {
 export function proposeLesson(storage: StorageAdapter, proposal: LessonProposal, now?: string): Lesson {
   const parsed = lessonProposalSchema.safeParse(proposal);
   if (!parsed.success) {
-    refuse("VALIDATION_FAILED", "Lesson proposal failed schema validation.", {
-      issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-    });
+    refuseSchema("Lesson proposal", parsed.error.issues);
   }
   const input = parsed.data;
 

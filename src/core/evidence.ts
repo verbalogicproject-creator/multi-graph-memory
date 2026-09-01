@@ -7,7 +7,7 @@
  */
 
 import { deriveEvidenceId } from "./canonical.ts";
-import { refuse } from "./errors.ts";
+import { refuseSchema } from "./errors.ts";
 import { assertRedactionBoundary } from "./redaction.ts";
 import { evidenceSchema } from "./schema.ts";
 import { assertProjectMatch, requireScope } from "./scope.ts";
@@ -36,9 +36,7 @@ export function recordEvidenceTx(tx: StorageTx, input: EvidenceInput): Evidence 
 
   const parsed = evidenceSchema.safeParse(evidence);
   if (!parsed.success) {
-    refuse("VALIDATION_FAILED", "Evidence failed schema validation.", {
-      issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
-    });
+    refuseSchema("Evidence", parsed.error.issues);
   }
 
   assertRedactionBoundary(evidence, "persistence");

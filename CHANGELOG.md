@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed — two refusals that read as empty results
+
+Both were found by the first host to depend on this package rather than read it,
+and both cost the same thing: a caller was told nothing happened, when something
+had in fact been rejected.
+
+- **A schema refusal now names the field and the value it rejected**, in
+  `error.message` rather than only in `error.detail.issues`. Logging `message` and
+  dropping the rest is the normal thing to do at a process boundary, and the host
+  that did lost every event carrying an undeclared `domain` — reported to it as a
+  count, with the field never named. The message now reads `Event failed schema
+  validation — domain: Invalid option: expected one of "build"|…|"art-direction"`,
+  so a caller learns both what was wrong and what would have been accepted. New
+  `refuseSchema()` in `core/errors.ts`; the five `prepare*` and import sites share
+  it, each naming its own subject, and every issue is still in `detail`.
+- **`--build <id>` no longer creates the cluster it cannot find.** Opening a
+  SQLite database creates it, so a mistyped build id answered "No episodes
+  recorded" — indistinguishable from a build that genuinely recorded nothing — and
+  left an empty file behind. It now refuses by name, lists the ids that do exist,
+  and exits 1 having created nothing. `--database` is deliberately not guarded: it
+  names a file the caller chose, and creating one is sometimes the point.
+
+Covered by `test/refusals.test.ts`, including that the guard runs *before*
+anything is opened, and that the working case still works. 219 tests.
+
 ### Added — a build, so a plain-JavaScript host can consume the package
 
 The package runs its own TypeScript directly on Node's type stripping, which is

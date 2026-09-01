@@ -59,16 +59,21 @@ API only became visible when something actually called it.
 Not the field — the event. `domain: 'design'` is not in `LESSON_DOMAINS`, and the
 consumer's bridge could report the loss only as a count, with the reason buried
 in a `failures` map. Every direction the user ever chose would have been dropped
-silently. The fix on the consumer's side was to mirror `LESSON_DOMAINS` as a
-TypeScript union so an undeclared domain is a compile error, and that is the
-right shape of fix — but a vocabulary this strict should say which value it
-rejected. Worth considering: name the offending field in the refusal message.
+silently. *Fixed here:* `refuseSchema()` puts the offending path and the
+validator's own message into `error.message`, not only into `detail.issues`, so a
+host that logs `message` learns which field it got wrong and what the vocabulary
+actually is. The consumer separately mirrored `LESSON_DOMAINS` as a TypeScript
+union, which is the better place to catch it — but a strict vocabulary should
+still say what it wanted, and now it does.
 
-**`--build <id>` creates the cluster it does not find.** A mistyped build id
-answers "No episodes recorded" rather than "no such build", which reads exactly
-like a run that recorded nothing. It also leaves an empty database behind.
+**`--build <id>` created the cluster it could not find.** A mistyped build id
+answered "No episodes recorded" rather than "no such build", which reads exactly
+like a run that recorded nothing, and left an empty database behind.
 Register-on-first-use is defensible; being indistinguishable from an empty result
-is what costs the time.
+is what costs the time. *Fixed here:* the guard runs before anything is opened —
+because opening is what creates it — names the id it could not find, lists the
+ids that do exist, and exits 1. `--database` is deliberately still unguarded: it
+names a file the caller chose.
 
 Also confirmed working as designed: open-episode reuse absorbs a double-tap
 rather than forking the attempt, which puts the burden on closing rather than on
