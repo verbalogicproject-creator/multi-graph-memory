@@ -535,7 +535,15 @@ Some events are written *after* the answer is sent to the browser, deliberately,
 ### 8. Theoretical: closing a busy database
 The bridge keeps at most 8 build databases open and closes the oldest. If you had 9+ builds active at the same moment, a query in flight could hit a closed database. Practically impossible for one person; noted for honesty.
 
-### 9. `npx multi-memory` needs a build first
+### 9. Copying a `.db` file while the server runs loses recent writes
+The databases use WAL mode, so recent changes live in a companion `<name>.db-wal`
+file until they are folded in. `cp something.db elsewhere/` silently gives you a
+**stale** copy. Hit during testing: an approval and a whole lesson went missing.
+Copy all three files (`.db`, `.db-wal`, `.db-shm`) together, or better, stop the
+server first, or best, use `mm sync export` — which exists for exactly this and
+gives you a checksummed bundle.
+
+### 10. `npx multi-memory` needs a build first
 The published entry point is `dist/bin/multi-memory.js`. If `dist/` is missing, run `npm run build` in `/root/multi-graph-memory`. Running the source directly (`node bin/multi-memory.ts`) always works and needs no build.
 
 ---
@@ -550,6 +558,7 @@ The published entry point is `dist/bin/multi-memory.js`. If `dist/` is missing, 
 | `approvedBy is required` | approval with a blank name | supply a real name; an approval with no approver is not an approval |
 | `mm` finds a database you did not expect | it walked up to the nearest `package.json` or `.git` | create a `.multi-memory.json` where you want it |
 | Nothing is recorded when you use the app | the interface is not wired yet | expected — step 4 of this cycle |
+| A copied database is missing recent changes | WAL file left behind | copy `.db`, `.db-wal` and `.db-shm` together, or use `mm sync export` |
 
 ---
 
