@@ -47,6 +47,34 @@ used directly: `integrity.py:_find_cycle` recurses once per node and raises
 graphs most likely to contain a cycle. The TypeScript port is iterative and is
 tested at 50,000.
 
+## What the first real consumer found in this surface
+
+multi-app is now wired end to end: server-side taps for what only the server
+knows (the model that served a call after fallback), client-side taps for what
+only the browser knows (that a generation started, what the validator said,
+whether a human kept or discarded the result). Two things about this package's
+API only became visible when something actually called it.
+
+**An undeclared `domain` fails schema validation and the whole event is refused.**
+Not the field — the event. `domain: 'design'` is not in `LESSON_DOMAINS`, and the
+consumer's bridge could report the loss only as a count, with the reason buried
+in a `failures` map. Every direction the user ever chose would have been dropped
+silently. The fix on the consumer's side was to mirror `LESSON_DOMAINS` as a
+TypeScript union so an undeclared domain is a compile error, and that is the
+right shape of fix — but a vocabulary this strict should say which value it
+rejected. Worth considering: name the offending field in the refusal message.
+
+**`--build <id>` creates the cluster it does not find.** A mistyped build id
+answers "No episodes recorded" rather than "no such build", which reads exactly
+like a run that recorded nothing. It also leaves an empty database behind.
+Register-on-first-use is defensible; being indistinguishable from an empty result
+is what costs the time.
+
+Also confirmed working as designed: open-episode reuse absorbs a double-tap
+rather than forking the attempt, which puts the burden on closing rather than on
+not-opening-twice — the consumer closes on every terminal path and closes
+orphans at startup.
+
 ## Working material that is not in git
 
 `/root/projects/kg-rag-cookbook/ideas/` is gitignored by request. It holds
