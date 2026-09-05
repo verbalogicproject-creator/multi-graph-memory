@@ -12,12 +12,11 @@
  * This file is a thin adapter, not a rewrite. `READ_ONLY_TOOLS`,
  * `FORBIDDEN_TOOL_PATTERNS`, `ReadOnlyMcpServer` and the source-scanning test in
  * `test/mcp.readonly.test.ts` all stay exactly as they are — the SDK transports
- * tools here, it does not decide what they are. `tools/list` returns
- * `READ_ONLY_TOOLS` verbatim; `tools/call` is handed to
- * `ReadOnlyMcpServer.handleRequest`, and its answer is unwrapped or its error is
- * rethrown so the SDK's own error path takes over. Nothing about tool dispatch
- * is reimplemented, so nothing about it can drift from what the existing test
- * suite already proves.
+ * tools here, it does not decide what they are. The actual wiring
+ * (`tools/list` -> `READ_ONLY_TOOLS`, `tools/call` -> `ReadOnlyMcpServer.
+ * handleRequest`) lives in `src/mcp/sdkAdapter.ts`, shared with the HTTP
+ * transport (`src/mcp/http.ts`, B2) so the translation exists exactly once
+ * regardless of how many transports carry it.
  *
  * The low-level `Server` class is used deliberately over the newer `McpServer`,
  * despite the SDK marking it `@deprecated` in favour of `McpServer`.
@@ -29,40 +28,16 @@
  * capability negotiation and notification handling correctly underneath it.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { ReadOnlyMcpServer, READ_ONLY_TOOLS } from "../src/mcp/server.ts";
 import { openMemory } from "../src/cli/multi-memory.ts";
+import { attachReadOnlyTools } from "../src/mcp/sdkAdapter.ts";
+import { packageVersion } from "../src/mcp/version.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-/**
- * Walked, not a fixed `../..` — this file's distance from `package.json` differs
- * between the source tree (`bin/` is one level under the package root) and the
- * build (`tsconfig.build.json` mirrors that same tree one level deeper, under
- * `dist/`, so it's two levels from there). A fixed relative path is only ever
- * right for one of the two, and this was measured wrong the first time: it read
- * clean from `node bin/multi-memory-mcp.ts` and threw `ENOENT` from the compiled
- * `dist/bin/multi-memory-mcp.js` this package's own `bin` field actually points
- * at. Walking up is correct in both cases, and in a third this project doesn't
- * exercise yet but a real install does: running from inside someone else's
- * `node_modules/multi-graph-memory/`.
- */
-const findPackageJson = (startDir: string): string => {
-  let dir = startDir;
-  for (;;) {
-    const candidate = join(dir, "package.json");
-    if (existsSync(candidate)) return candidate;
-    const parent = dirname(dir);
-    if (parent === dir) throw new Error(`package.json not found above ${startDir}`);
-    dir = parent;
-  }
-};
-const pkg = JSON.parse(readFileSync(findPackageJson(__dirname), "utf8")) as { version: string };
+const version = packageVersion(__dirname);
 
 async function main(): Promise<void> {
   /**
@@ -74,30 +49,11 @@ async function main(): Promise<void> {
    */
   const { memory, storage, config } = openMemory();
 
-  const inner = new ReadOnlyMcpServer({ memory });
-
   const server = new Server(
-    { name: "multi-memory", version: pkg.version },
+    { name: "multi-memory", version },
     { capabilities: { tools: {} } },
   );
-
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: READ_ONLY_TOOLS }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const response = (await inner.handleRequest({
-      id: 0,
-      method: "tools/call",
-      params: { name: request.params.name, arguments: request.params.arguments ?? {} },
-    })) as { result?: { content: Array<{ type: "text"; text: string }> }; error?: { message: string } };
-    /* `handleRequest` already knows how to fail — "Unknown tool", a
-       GraphMemory error's own message. Rethrowing hands that same message to
-       the SDK's protocol-level error path rather than re-deciding what it
-       should say. */
-    if (response.error) throw new Error(response.error.message);
-    /* `handleRequest` sets exactly one of `result`/`error` — the branch above
-       already ruled out `error`, so `result` is guaranteed here. */
-    return response.result!;
-  });
+  attachReadOnlyTools(server, memory);
 
   const shutdown = () => {
     storage.close();

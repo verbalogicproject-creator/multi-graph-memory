@@ -49,16 +49,19 @@
     "verify:pure": "node tooling/verify-pure.mjs",
     "schemas": "node tooling/emit-schemas.mjs",
     "mcp": "node bin/multi-memory-mcp.ts",
+    "mcp:http": "node bin/multi-memory-mcp-http.ts",
     "memory": "node bin/multi-memory.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "express": "^5.2.1",
     "zod": "^3.24.1"
   },
   "optionalDependencies": {
     "@google/genai": "^2.18.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.13.4",
     "typescript": "^5.8.2"
   },

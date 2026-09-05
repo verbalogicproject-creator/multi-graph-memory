@@ -123,3 +123,55 @@ assert.ok(distMcpOk, `dist/bin/multi-memory-mcp.js did not answer initialize cor
 assert.equal(stderr.includes("ENOENT"), false, `the built MCP server threw a file-not-found error:\n${stderr}`);
 
 console.log(`✔ check:dist — ${pkg.bin["multi-memory-mcp"]} starts and answers initialize`);
+
+/**
+ * The HTTP transport's compiled entrypoint (B2). No `bin` field for this one —
+ * it is a service entrypoint a Dockerfile CMD points at directly, not a
+ * global-install command — so the path is named here rather than read from
+ * `pkg.bin`. Same class of risk as the stdio check above: this file shares
+ * `packageVersion`'s walk-up logic, already proven, but compiling an
+ * Express-based file is new ground the stdio check does not cover.
+ */
+const httpBin = join(new URL("..", import.meta.url).pathname, "dist/bin/multi-memory-mcp-http.js");
+const httpScratch = mkdtempSync(join(tmpdir(), "fgm-dist-mcp-http-"));
+const httpPort = 8791;
+const httpChild = spawn(process.execPath, [httpBin], {
+  cwd: httpScratch,
+  stdio: ["ignore", "pipe", "pipe"],
+  env: { ...process.env, PORT: String(httpPort), MCP_API_KEY: "check-dist-key" },
+});
+
+let httpStdout = "";
+let httpStderr = "";
+httpChild.stdout.on("data", (chunk) => { httpStdout += chunk.toString(); });
+httpChild.stderr.on("data", (chunk) => { httpStderr += chunk.toString(); });
+
+const httpUp = await new Promise((resolve) => {
+  const timer = setTimeout(() => resolve(false), 5000);
+  const poll = setInterval(() => {
+    if (!httpStdout.includes("listening")) return;
+    clearInterval(poll);
+    clearTimeout(timer);
+    resolve(true);
+  }, 20);
+});
+assert.ok(httpUp, `dist/bin/multi-memory-mcp-http.js never reported listening.\nstderr: ${httpStderr}\nstdout: ${httpStdout}`);
+
+const unauthed = await fetch(`http://127.0.0.1:${httpPort}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+assert.equal(unauthed.status, 401, "an unauthenticated request to the built HTTP server must be refused");
+
+const authed = await fetch(`http://127.0.0.1:${httpPort}/mcp`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", "X-Api-Key": "check-dist-key" },
+  body: JSON.stringify({
+    jsonrpc: "2.0", id: 1, method: "initialize",
+    params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "check-dist", version: "0.0.0" } },
+  }),
+});
+assert.equal(authed.status, 200, "a correctly authenticated initialize must succeed against the built HTTP server");
+
+httpChild.kill();
+rmSync(httpScratch, { recursive: true, force: true });
+assert.equal(httpStderr.includes("ENOENT"), false, `the built HTTP MCP server threw a file-not-found error:\n${httpStderr}`);
+
+console.log("✔ check:dist — dist/bin/multi-memory-mcp-http.js starts, fails closed, and authenticates correctly");
