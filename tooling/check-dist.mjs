@@ -13,6 +13,10 @@
 
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../package.json");
@@ -67,3 +71,55 @@ assert.equal(typeof port.approveLesson, "undefined", "ModelContextPort must stay
 storage.close();
 
 console.log(`✔ check:dist — ${pkg.exports["."].default} imports and runs from plain JavaScript`);
+
+/**
+ * The `bin` entry, run as the real artifact a global install would place on
+ * `PATH` — not the source `.ts` file `test/mcp.stdio.test.ts` spawns.
+ *
+ * This is the check that catches a class of bug the test suite structurally
+ * cannot: a path computed relative to the *source* file's location, correct
+ * there, wrong once the same relative depth is measured from inside `dist/`
+ * (`tsconfig.build.json` mirrors the source tree one level deeper). Found this
+ * way once already — `bin/multi-memory-mcp.ts` read its own `package.json` via
+ * a fixed `../package.json` that resolved to a real file from `bin/` and to
+ * `dist/package.json` (nonexistent) from `dist/bin/`.
+ */
+const mcpBin = join(new URL("..", import.meta.url).pathname, pkg.bin["multi-memory-mcp"]);
+const scratch = mkdtempSync(join(tmpdir(), "fgm-dist-mcp-"));
+const child = spawn(process.execPath, [mcpBin], { cwd: scratch, stdio: ["pipe", "pipe", "pipe"] });
+
+let stdout = "";
+let stderr = "";
+child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+
+child.stdin.write(
+  `${JSON.stringify({
+    jsonrpc: "2.0", id: 1, method: "initialize",
+    params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "check-dist", version: "0.0.0" } },
+  })}\n`,
+);
+
+const distMcpOk = await new Promise((resolve) => {
+  const timer = setTimeout(() => resolve(false), 5000);
+  const poll = setInterval(() => {
+    const line = stdout.split("\n").find((l) => l.trim());
+    if (!line) return;
+    clearInterval(poll);
+    clearTimeout(timer);
+    try {
+      const response = JSON.parse(line);
+      resolve(Boolean(response.result?.protocolVersion));
+    } catch {
+      resolve(false);
+    }
+  }, 20);
+});
+
+child.kill();
+rmSync(scratch, { recursive: true, force: true });
+
+assert.ok(distMcpOk, `dist/bin/multi-memory-mcp.js did not answer initialize correctly.\nstderr: ${stderr}\nstdout: ${stdout}`);
+assert.equal(stderr.includes("ENOENT"), false, `the built MCP server threw a file-not-found error:\n${stderr}`);
+
+console.log(`✔ check:dist — ${pkg.bin["multi-memory-mcp"]} starts and answers initialize`);

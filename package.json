@@ -10,12 +10,26 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "multi-memory": "./dist/bin/multi-memory.js"
+    "multi-memory": "./dist/bin/multi-memory.js",
+    "multi-memory-mcp": "./dist/bin/multi-memory-mcp.js"
   },
   "exports": {
-    ".": { "types": "./dist/src/index.d.ts", "default": "./dist/src/index.js" },
-    "./core": { "types": "./dist/src/core/index.d.ts", "default": "./dist/src/core/index.js" },
-    "./adapters": { "types": "./dist/src/adapters/index.d.ts", "default": "./dist/src/adapters/index.js" }
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./core": {
+      "types": "./dist/src/core/index.d.ts",
+      "default": "./dist/src/core/index.js"
+    },
+    "./adapters": {
+      "types": "./dist/src/adapters/index.d.ts",
+      "default": "./dist/src/adapters/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/src/mcp/server.d.ts",
+      "default": "./dist/src/mcp/server.js"
+    }
   },
   "files": [
     "dist",
@@ -34,18 +48,19 @@
     "check": "npm run check:boundaries && npm run typecheck && npm test && npm run check:dist",
     "verify:pure": "node tooling/verify-pure.mjs",
     "schemas": "node tooling/emit-schemas.mjs",
-    "mcp": "node src/mcp/server.ts",
+    "mcp": "node bin/multi-memory-mcp.ts",
     "memory": "node bin/multi-memory.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.24.1"
   },
   "optionalDependencies": {
     "@google/genai": "^2.18.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.2",
-    "@types/node": "^22.13.4"
+    "@types/node": "^22.13.4",
+    "typescript": "^5.8.2"
   },
   "allowScripts": {
     "@google/genai": false,
