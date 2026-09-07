@@ -51,7 +51,38 @@ handful of enthusiastic forum posts and read them as a market. Any research pass
 report disconfirming evidence with equal weight, and should say plainly if the answer is
 "the pain is real but people route around it for free."
 
-## 3. Smaller follow-ons
+## 3. `PostgresStorageAdapter` — the next storage backend for a live Cloud Run deploy
+
+The current Cloud Run plan (see the multi-app-side deployment plan) ships read-only: the
+image bakes in a bundle imported at build time via `multi-memory sync export`/`importBundle`,
+so the first deploy needs no persistence layer at all. This is the design for what replaces
+that once writes need to reach the remote surface.
+
+**Interface, not implementation, decided now:** a `PostgresStorageAdapter` implementing the
+exact same `StorageAdapter`/`StorageTx` contract in `src/adapters/storage.ts` that
+`MemoryStorageAdapter` and `SqliteStorageAdapter` already satisfy — proven genuinely
+swappable by `npm run check:adapter` (`test/adapter.conformance.test.ts`), which any new
+adapter must pass before it is trusted, not just asserted compatible. Concretely: one table
+per record type (`events`, `episodes`, `lessons`, `evidence`), `transact()` mapped to a real
+Postgres transaction (`BEGIN`/`COMMIT`/`ROLLBACK`, not savepoints-by-default — matching
+`MemoryStorageAdapter`'s simpler nested-transaction semantics is fine, since savepoint
+independence was never part of the shared contract), and `listEvents`/`listLessons`'s facet
+filters translated to `WHERE` clauses mirroring `src/adapters/filters.ts`'s predicates exactly
+— the same discipline the SQLite adapter already follows (its own tests assert its SQL agrees
+with the JS predicates, not just that it returns *something*).
+
+**Why Cloud SQL Postgres, not GCS-FUSE.** `node:sqlite` opens its database in WAL mode; WAL
+depends on `mmap` and byte-range locking semantics that a FUSE-mounted GCS bucket does not
+provide correctly under concurrent access. That is a corruption risk, not a persistence
+strategy — rejected for that reason, not for lack of trying.
+
+**What stays deliberately absent until then:** per `ROADMAP.md`'s own already-listed gap list
+above (§1) — authentication, tenant identity, rate limiting, quota, key custody. Writes do
+not reach the remote surface at all until one of those exists to carry them; a Postgres
+adapter with no auth model in front of it is a louder version of the same unresolved problem,
+not a fix for it.
+
+## 4. Smaller follow-ons
 
 - A real schema migration once a v2 exists, exercising the ladder end to end rather than
   only its refusal paths.

@@ -44,6 +44,7 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "prepare": "npm run build",
     "check:boundaries": "node tooling/check-boundaries.mjs",
+    "check:adapter": "node --test test/adapter.conformance.test.ts",
     "check:dist": "npm run build && node tooling/check-dist.mjs",
     "check": "npm run check:boundaries && npm run typecheck && npm test && npm run check:dist",
     "verify:pure": "node tooling/verify-pure.mjs",

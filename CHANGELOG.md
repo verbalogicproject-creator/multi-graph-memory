@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added — storage-adapter conformance suite (B3, "the foundation for a live persistent store")
+
+- `test/adapter.conformance.test.ts` — the same battery of `StorageAdapter` contract
+  assertions (idempotent `putEventIfAbsent`, transact atomicity, project-scope isolation,
+  facet-query filtering, ordering, schema-version round-trip) run against both
+  `MemoryStorageAdapter` and `SqliteStorageAdapter`. Before this, `MemoryStorageAdapter` had
+  no dedicated test of its own at all — it was only ever used as a convenient test double for
+  unrelated suites — so "the storage layer is swappable" was an assertion in a doc comment,
+  never actually proven. `npm run check:adapter` runs it directly; it also runs under
+  `npm test`/`npm run check` via the existing glob.
+- Found and fixed a bug in the test itself, not the product, while writing it: the first draft
+  of the idempotency assertion went through `appendEvent()`, whose domain layer
+  (`appendEventTx`) does its own `tx.getEvent()` existence check before ever calling
+  `putEventIfAbsent` — so a deliberately-broken `putEventIfAbsent` (always returning `true`)
+  still passed. Rewritten to call `tx.putEventIfAbsent` directly, and verified by the same
+  break-it-and-restore-it method this project's own convention requires: the sabotaged version
+  now fails the assertion by name, and passes clean once reverted.
+- `ROADMAP.md` §3 — a `PostgresStorageAdapter` design note (interface decided now, not built):
+  the next backend behind the same `StorageAdapter` contract, for when the Cloud Run deploy
+  needs to accept writes rather than serve a build-time-imported bundle. Explains why Cloud SQL
+  Postgres over GCS-FUSE (WAL's mmap/byte-range-locking assumptions are not safe over a FUSE
+  mount — a corruption risk, not a persistence strategy) and reiterates that writes stay off
+  the remote surface until an auth/tenant model exists to carry them.
+
 ### Fixed — two refusals that read as empty results
 
 Both were found by the first host to depend on this package rather than read it,
