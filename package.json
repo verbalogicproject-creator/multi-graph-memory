@@ -2,7 +2,7 @@
   "name": "multi-graph-memory",
   "version": "0.2.0",
   "description": "Governed episodic and lesson memory for the multi-app builder. One cluster per build. Local-first, offline-pure core with an injected relevance layer.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Eyal Nof <verbalogic.project@gmail.com>",
   "type": "module",
   "private": true,

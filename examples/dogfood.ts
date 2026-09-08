@@ -8,6 +8,7 @@
  */
 
 import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteStorageAdapter } from "../src/adapters/sqlite.ts";
 import { GraphMemory, ModelContextPort } from "../src/port.ts";
@@ -15,7 +16,7 @@ import { renderPacket } from "../src/core/packet.ts";
 import { projectDocuments } from "../src/docs/projector.ts";
 import { isGraphMemoryError } from "../src/core/errors.ts";
 
-const DIR = process.env.DOGFOOD_DIR ?? "/tmp/fgm-dogfood";
+const DIR = process.env.DOGFOOD_DIR ?? join(tmpdir(), "multi-graph-memory-dogfood");
 const DB = join(DIR, "build-demo.db");
 
 function ok(label: string, detail = ""): void {
