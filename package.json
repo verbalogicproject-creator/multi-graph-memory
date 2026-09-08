@@ -59,7 +59,8 @@
     "zod": "^3.24.1"
   },
   "optionalDependencies": {
-    "@google/genai": "^2.18.0"
+    "@google/genai": "^2.18.0",
+    "sqlite-vec": "^0.1.9"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
