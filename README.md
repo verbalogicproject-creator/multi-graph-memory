@@ -4,9 +4,15 @@ Governed episodic and lesson memory for the **multi-app builder** — local-firs
 **offline-pure governance core** and an **injected relevance layer**.
 
 > **Standing:** the governance core, storage, relevance and surfaces are built and tested
-> (158 tests, `verify:pure` green). The binding to multi-app is **specified, not wired** —
-> see [Integrating with multi-app](#integrating-with-multi-app). No file in `/root/multi-app`
-> has been modified by this package.
+> (253 tests, `verify:pure` green as of 2026-09-08). The binding to multi-app is **wired**,
+> not merely specified: multi-app declares this package in its `dependencies`, imports it
+> through `memory/bridge.js`, exercises it end to end in `npm run smoke:memory`, and builds
+> it in CI. See [Integrating with multi-app](#integrating-with-multi-app).
+>
+> An earlier version of this note said the binding was "specified, not wired" and that no
+> file in `/root/multi-app` had been modified. Both stopped being true and the note did not,
+> which is the failure this paragraph now exists to avoid: a standing claim is a claim, and
+> it goes stale silently.
 
 ## What problem it solves
 
@@ -47,7 +53,7 @@ Similarity may reorder what a query returns. It can never promote.
 
 ```bash
 npm install          # zod; @google/genai is optional
-npm run check        # boundaries + typecheck + 158 tests
+npm run check        # boundaries + typecheck + the suite + dist smoke
 npm run verify:pure  # proves the package works with NO provider and NO key
 node examples/dogfood.ts
 ```
