@@ -43,6 +43,7 @@ multi-memory — governed episodic and lesson memory
   multi-memory events [--kind K] [--episode ID] [--provider P] [--model M]
                       [--surface S] [--component C] [--since ISO] [--limit N] [--json]
   multi-memory attribution                                who produced what, by provider
+  multi-memory ladder                                     is anything climbing, and which rung is stuck
   multi-memory docs generate [--dir <path>]
   multi-memory docs ingest <file>
   multi-memory graph export <file.html|file.json>       3D graph, or nodes+edges
@@ -407,6 +408,180 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
      * read as "this producer did N things and M of them verified" when the N and
      * the M can come from entirely unrelated records.
      */
+    /**
+     * The ladder, and why each lesson is where it is.
+     *
+     * Every other view of memory answers "what do we know". This one answers the
+     * question the ladder exists to make answerable and could not: is anything
+     * actually climbing, and if not, which rung is stuck. A lesson that has never
+     * been surfaced cannot be applied, so it cannot qualify -- and before recall
+     * telemetry existed that state was indistinguishable from a lesson that was
+     * surfaced constantly and simply never helped.
+     *
+     * Every row states a reason. A row that said only "proposed, 0 reuses" would
+     * be this plan's founding defect wearing a table.
+     */
+    case "ladder": {
+      const lessons = memory.listLessons({});
+      const recalls = memory.queryEvents({ kinds: ["recall.completed"] });
+      const trials = memory.queryEvents({ kinds: ["trial.completed"] });
+      const episodes = memory.listEpisodes();
+
+      const idsIn = (event: { payload: Record<string, unknown> }): string[] => {
+        const raw = event.payload["lessonIds"];
+        return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
+      };
+
+      const surfaced = new Map<string, number>();
+      for (const event of recalls) for (const id of idsIn(event)) surfaced.set(id, (surfaced.get(id) ?? 0) + 1);
+      const trialled = new Map<string, number>();
+      for (const event of trials) for (const id of idsIn(event)) trialled.set(id, (trialled.get(id) ?? 0) + 1);
+
+      /* Applied is counted from episodes, not from the telemetry, because that is
+         what the promotion rule actually reads (`lessons.ts` refuses reuse unless
+         the episode recorded it). Counting the events instead would report a
+         number the ladder does not use. */
+      const applied = new Map<string, number>();
+      const appliedInVerified = new Map<string, number>();
+      for (const episode of episodes) {
+        for (const id of episode.appliedLessonIds) {
+          applied.set(id, (applied.get(id) ?? 0) + 1);
+          if (episode.outcome === "verified") {
+            appliedInVerified.set(id, (appliedInVerified.get(id) ?? 0) + 1);
+          }
+        }
+      }
+
+      /** The rung, and the specific thing standing between it and the next one. */
+      const stateOf = (lesson: (typeof lessons)[number]) => {
+        const seen = (surfaced.get(lesson.id) ?? 0) + (trialled.get(lesson.id) ?? 0);
+        const applications = applied.get(lesson.id) ?? 0;
+        const verifiedApplications = appliedInVerified.get(lesson.id) ?? 0;
+
+        if (lesson.status === "approved") return { blocked: false, reason: "climbed: approved by a human" };
+        if (lesson.status === "revoked") {
+          return { blocked: true, reason: `revoked: ${lesson.revokedReason ?? "no reason recorded"}` };
+        }
+        if (lesson.status === "contradicted") {
+          return {
+            blocked: true,
+            reason: `contradicted by ${lesson.contradictionIds.length} evidence record(s); blocked from both reuse and approval, and absent from every packet`,
+          };
+        }
+        if (lesson.status === "qualified") {
+          return { blocked: true, reason: "awaiting human approval — the only rung a model may not climb" };
+        }
+        if (seen === 0) {
+          return {
+            blocked: true,
+            reason: "never surfaced: the governed packet admits only qualified and approved, and no trial has matched its trigger tags",
+          };
+        }
+        if (applications === 0) {
+          return { blocked: true, reason: `surfaced ${seen} time(s) but never recorded as applied` };
+        }
+        if (verifiedApplications === 0) {
+          return {
+            blocked: true,
+            reason: `applied in ${applications} episode(s), none of which closed verified — reuse requires a verified outcome`,
+          };
+        }
+        return { blocked: true, reason: `applied in ${verifiedApplications} verified episode(s) but reuse was never recorded` };
+      };
+
+      const rows = lessons
+        .map((lesson) => ({
+          id: lesson.id,
+          status: lesson.status,
+          trigger: lesson.trigger,
+          domain: lesson.domain,
+          component: lesson.component ?? null,
+          surfaced: surfaced.get(lesson.id) ?? 0,
+          trialled: trialled.get(lesson.id) ?? 0,
+          applied: applied.get(lesson.id) ?? 0,
+          appliedInVerified: appliedInVerified.get(lesson.id) ?? 0,
+          reuseCount: lesson.reuseCount,
+          ...stateOf(lesson),
+        }))
+        .sort((a, b) => b.surfaced + b.trialled - (a.surfaced + a.trialled) || a.id.localeCompare(b.id));
+
+      const outcomes = new Map<string, number>();
+      let droppedForBudget = 0;
+      let droppedForDiversity = 0;
+      let droppedForDirectionBar = 0;
+      for (const event of recalls) {
+        const outcome = typeof event.payload["outcome"] === "string" ? (event.payload["outcome"] as string) : "unrecorded";
+        outcomes.set(outcome, (outcomes.get(outcome) ?? 0) + 1);
+        const om = event.payload["omissions"];
+        if (om && typeof om === "object") {
+          const o = om as Record<string, unknown>;
+          droppedForBudget += typeof o["droppedForBudget"] === "number" ? o["droppedForBudget"] : 0;
+          droppedForDiversity += typeof o["droppedForDiversity"] === "number" ? o["droppedForDiversity"] : 0;
+          droppedForDirectionBar += typeof o["droppedForDirectionBar"] === "number" ? o["droppedForDirectionBar"] : 0;
+        }
+      }
+
+      const summary = {
+        lessons: lessons.length,
+        byStatus: Object.fromEntries(
+          ["proposed", "qualified", "approved", "contradicted", "revoked"].map((s) => [
+            s,
+            lessons.filter((l) => l.status === s).length,
+          ]),
+        ),
+        recallsRecorded: recalls.length,
+        trialsRecorded: trials.length,
+        recallOutcomes: Object.fromEntries(outcomes),
+        dropped: { droppedForBudget, droppedForDiversity, droppedForDirectionBar },
+      };
+
+      if (asJson) return out({ summary, lessons: rows }, true);
+
+      if (lessons.length === 0) return "No lessons in this project yet.";
+
+      const lines: string[] = [];
+      lines.push(
+        `${summary.lessons} lesson(s): ` +
+          Object.entries(summary.byStatus)
+            .filter(([, n]) => n > 0)
+            .map(([s, n]) => `${n} ${s}`)
+            .join(", "),
+      );
+
+      if (recalls.length === 0) {
+        lines.push(
+          "",
+          "No recall telemetry recorded yet, so 'surfaced' is unknown rather than zero.",
+          "It is written by the host on every recall; if this stays empty while builds",
+          "run, the host is not calling recall at all.",
+        );
+      } else {
+        lines.push(
+          "",
+          `${recalls.length} recall(s), ${trials.length} trial(s) recorded. Outcomes: ` +
+            [...outcomes.entries()].map(([o, n]) => `${o} ${n}`).join(", "),
+          `Dropped across all recalls — budget ${droppedForBudget}, diversity ${droppedForDiversity}, direction bar ${droppedForDirectionBar}`,
+        );
+      }
+
+      lines.push("", `${"status".padEnd(13)} ${"seen".padStart(4)} ${"appl".padStart(4)} ${"reuse".padStart(5)}  trigger`);
+      for (const row of rows) {
+        const seen = row.surfaced + row.trialled;
+        lines.push(
+          `${row.status.padEnd(13)} ${String(seen).padStart(4)} ${String(row.applied).padStart(4)} ${String(row.reuseCount).padStart(5)}  ${row.trigger.slice(0, 60)}`,
+        );
+        lines.push(`${" ".repeat(13)} ↳ ${row.reason}`);
+      }
+
+      lines.push(
+        "",
+        "'seen' counts governed recalls plus unproven trials. A lesson climbs only by",
+        "being applied in a LATER, DIFFERENT episode that closed verified; approval",
+        "after that is a human act and is deliberately unavailable to any model.",
+      );
+      return lines.join("\n");
+    }
+
     case "attribution": {
       const nameOf = (provider?: string, model?: string) =>
         [provider, model].filter(Boolean).join("/") || "unattributed";
@@ -732,6 +907,9 @@ const MENU = [
   ["7", "Revoke a lesson (human)", "lesson revoke"],
   ["8", "Generate project documents", "docs generate"],
   ["9", "Doctor", "doctor"],
+  /* A letter, not a number: renumbering the existing entries would change what
+     every muscle-memory keystroke does, to add one row. */
+  ["l", "Ladder — is anything climbing", "ladder"],
   ["q", "Quit", ""],
 ] as const;
 

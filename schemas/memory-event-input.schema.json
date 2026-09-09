@@ -62,7 +62,9 @@
         "revision.promoted",
         "revision.rolled_back",
         "human.decision",
-        "deviation.observed"
+        "deviation.observed",
+        "recall.completed",
+        "trial.completed"
       ]
     },
     "occurredAt": {

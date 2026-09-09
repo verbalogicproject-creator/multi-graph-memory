@@ -81,7 +81,9 @@
               "revision.promoted",
               "revision.rolled_back",
               "human.decision",
-              "deviation.observed"
+              "deviation.observed",
+              "recall.completed",
+              "trial.completed"
             ]
           },
           "occurredAt": {
@@ -450,6 +452,11 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 2000
+          },
+          "supersedesEvidenceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
           }
         },
         "required": [

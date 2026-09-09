@@ -28,6 +28,27 @@ export const MEMORY_EVENT_KINDS = [
    * It is NOT a contradiction until it independently qualifies as one.
    */
   "deviation.observed",
+  /**
+   * What a recall actually delivered, and what it left out.
+   *
+   * The packet already computes the whole accounting -- considered, returned,
+   * and dropped for the budget, for source diversity and for the direction bar.
+   * Until this kind existed that accounting was rebuilt every turn and discarded
+   * every turn, so "which lessons never get surfaced, and why" was unanswerable
+   * about a system whose entire purpose is to surface lessons.
+   *
+   * Observational only: it grants no authority, and nothing reads it back into
+   * a packet.
+   */
+  "recall.completed",
+  /**
+   * The same, for the unproven-proposal channel: which `proposed` lessons were
+   * tried, against which failure codes. Kept separate from `recall.completed`
+   * because a trial is a different claim -- it says "this has NOT been shown to
+   * help and is being tried anyway" -- and merging the two would make the
+   * surfaced-count of a proven lesson indistinguishable from a guess.
+   */
+  "trial.completed",
 ] as const;
 
 export type MemoryEventKind = (typeof MEMORY_EVENT_KINDS)[number];

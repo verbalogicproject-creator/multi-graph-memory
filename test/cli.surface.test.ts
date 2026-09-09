@@ -445,3 +445,96 @@ test("prune refuses without an age, and dry-runs by default", async () => {
     cleanup();
   }
 });
+
+/* ------------------------------------------------------------------ ladder -- */
+
+test("every ladder row states why a lesson has not climbed", async () => {
+  // The founding defect, in the new surface. A row reading "proposed, 0 reuses"
+  // is a zero that does not say why, which is exactly the thing this whole
+  // system exists to remove. Every row must name the rung it is stuck on.
+  const { context, cleanup } = setup();
+  try {
+    const m = context.memory;
+    const source = m.openEpisode({ objective: "a build", baseRevisionId: "rev-1" });
+    m.closeEpisode(source.id, "verified");
+    const evidence = m.recordEvidence({ kind: "verification.result", ref: "run://ladder" });
+
+    // Never surfaced: proposed, and no telemetry naming it.
+    m.proposeLesson({
+      trigger: "a proposal nothing has ever surfaced",
+      recommendation: "do the thing",
+      scope: ["build"], domain: "build",
+      sourceEpisodeIds: [source.id], evidenceIds: [evidence.id],
+    });
+    // Qualified but unapproved: stuck on the one rung a model may not climb.
+    const { lessonId } = seed(context);
+
+    const text = await run("ladder", context);
+
+    const lines = text.split("\n");
+    let rows = 0;
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!/^(proposed|qualified|approved|contradicted|revoked)\s/.test(lines[i] ?? "")) continue;
+      rows += 1;
+      assert.match(lines[i + 1] ?? "", /↳ \S/, `a status row must be followed by a reason: ${lines[i]}`);
+    }
+    assert.equal(rows, 2, "both lessons must appear as rows");
+
+    assert.match(text, /never surfaced/, "an unsurfaced proposal must say so");
+    assert.match(text, /awaiting human approval/, "a qualified lesson must name the approval gate");
+
+    const json = JSON.parse(await run("ladder --json", context)) as {
+      lessons: { id: string; reason: string; blocked: boolean }[];
+    };
+    assert.equal(json.lessons.length, 2);
+    for (const row of json.lessons) {
+      assert.ok(row.reason && row.reason.length > 0, `lesson ${row.id} has no reason`);
+    }
+    assert.ok(json.lessons.some((l) => l.id === lessonId));
+  } finally {
+    cleanup();
+  }
+});
+
+test("the ladder says 'unknown', not 'zero', when no recall has been recorded", async () => {
+  // A surfaced-count of 0 with no telemetry means nobody looked, not that the
+  // lesson was passed over. Reporting the second would be a confident wrong
+  // answer, and it is the exact shape of the false green this estate keeps
+  // finding: a number that reads as a measurement and is really an absence.
+  const { context, cleanup } = setup();
+  try {
+    seed(context);
+    const text = await run("ladder", context);
+    assert.match(text, /No recall telemetry recorded yet/);
+    assert.match(text, /unknown rather than zero/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("the ladder counts a lesson as surfaced only when telemetry names it", async () => {
+  const { context, cleanup } = setup();
+  try {
+    const { lessonId } = seed(context);
+    const episode = context.memory.listEpisodes()[0]!;
+
+    context.memory.appendEvent({
+      projectId: "cli-demo",
+      kind: "recall.completed",
+      occurredAt: new Date().toISOString(),
+      cycleId: "c1", phaseId: "builder", episodeId: episode.id,
+      payload: { outcome: "delivered", lessonIds: [lessonId], omissions: { droppedForBudget: 2, droppedForDiversity: 1, droppedForDirectionBar: 0 } },
+      evidenceIds: [],
+    });
+
+    const json = JSON.parse(await run("ladder --json", context)) as {
+      summary: { recallsRecorded: number; dropped: Record<string, number> };
+      lessons: { id: string; surfaced: number }[];
+    };
+    assert.equal(json.summary.recallsRecorded, 1);
+    assert.equal(json.summary.dropped["droppedForBudget"], 2);
+    assert.equal(json.lessons.find((l) => l.id === lessonId)?.surfaced, 1);
+  } finally {
+    cleanup();
+  }
+});
