@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS lessons (
   revoked_at          TEXT,
   revoked_reason      TEXT,
   reuse_count         INTEGER NOT NULL DEFAULT 0,
+  withdrawn_contradictions TEXT,
   created_at          TEXT NOT NULL,
   updated_at          TEXT NOT NULL
 );
@@ -204,6 +205,7 @@ function decodeLesson(row: Row): Lesson {
   put(lesson, "approvedByHumanAt", row.approved_at);
   put(lesson, "revokedAt", row.revoked_at);
   put(lesson, "revokedReason", row.revoked_reason);
+  put(lesson, "withdrawnContradictions", parseJson<unknown[]>(row.withdrawn_contradictions, []).length > 0 ? parseJson<unknown[]>(row.withdrawn_contradictions, []) : undefined);
   return lesson as unknown as Lesson;
 }
 
@@ -326,14 +328,15 @@ class SqliteTx implements StorageTx {
         `INSERT INTO lessons (id, project_id, status, trigger_text, recommendation, scope, domain,
            component, trigger_tags, source_episode_ids, reuse_episode_id, evidence_ids,
            contradiction_ids, deviation_ids, limits, approved_by, approved_at, revoked_at,
-           revoked_reason, reuse_count, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           revoked_reason, reuse_count, created_at, updated_at, withdrawn_contradictions)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET status=excluded.status, scope=excluded.scope,
            reuse_episode_id=excluded.reuse_episode_id, evidence_ids=excluded.evidence_ids,
            contradiction_ids=excluded.contradiction_ids, deviation_ids=excluded.deviation_ids,
            limits=excluded.limits, approved_by=excluded.approved_by, approved_at=excluded.approved_at,
            revoked_at=excluded.revoked_at, revoked_reason=excluded.revoked_reason,
-           reuse_count=excluded.reuse_count, updated_at=excluded.updated_at`,
+           reuse_count=excluded.reuse_count, updated_at=excluded.updated_at,
+           withdrawn_contradictions=excluded.withdrawn_contradictions`,
       )
       .run(
         lesson.id, lesson.projectId, lesson.status, lesson.trigger, lesson.recommendation,
@@ -343,6 +346,7 @@ class SqliteTx implements StorageTx {
         json(lesson.contradictionIds), json(lesson.deviationIds), json(lesson.limits),
         lesson.approvedBy ?? null, lesson.approvedByHumanAt ?? null, lesson.revokedAt ?? null,
         lesson.revokedReason ?? null, lesson.reuseCount, lesson.createdAt, lesson.updatedAt,
+        lesson.withdrawnContradictions === undefined ? null : json(lesson.withdrawnContradictions),
       );
 
     this.db.prepare("DELETE FROM lessons_fts WHERE lesson_id = ?").run(lesson.id);
@@ -508,6 +512,13 @@ export class SqliteStorageAdapter implements StorageAdapter, LexicalIndex {
       const evidenceColumns = columnNames(db, "evidence");
       if (!evidenceColumns.has("supersedes_evidence_id")) {
         db.exec("ALTER TABLE evidence ADD COLUMN supersedes_evidence_id TEXT");
+      }
+    }
+
+    if (version < 4) {
+      const lessonColumns = columnNames(db, "lessons");
+      if (!lessonColumns.has("withdrawn_contradictions")) {
+        db.exec("ALTER TABLE lessons ADD COLUMN withdrawn_contradictions TEXT");
       }
     }
 

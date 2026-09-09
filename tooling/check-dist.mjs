@@ -31,7 +31,8 @@ assert.equal(typeof ModelContextPort, "function");
 // not something that rides along silently in a build. Update it in the same
 // commit as the MIGRATIONS ladder step that raises it.
 //   2 -> 3  evidence carries an optional supersedes pointer
-assert.equal(CURRENT_SCHEMA_VERSION, 3);
+//   3 -> 4  lessons record contradictions a human has withdrawn
+assert.equal(CURRENT_SCHEMA_VERSION, 4);
 
 const storage = new MemoryStorageAdapter();
 storage.open();

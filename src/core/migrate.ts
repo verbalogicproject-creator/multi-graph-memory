@@ -12,11 +12,11 @@
 
 import { refuse } from "./errors.ts";
 
-/** 3: evidence carries an optional supersedes pointer, and its id includes the digest. */
-export const CURRENT_SCHEMA_VERSION = 3;
+/** 4: a lesson records contradictions a human has withdrawn, and why. */
+export const CURRENT_SCHEMA_VERSION = 4;
 
 /** Versions this build can read at all, before any migration is attempted. */
-export const SUPPORTED_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3];
+export const SUPPORTED_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3, 4];
 
 export interface Migration {
   from: number;
@@ -54,6 +54,18 @@ export const MIGRATIONS: readonly Migration[] = [
      * keeps the id it was stored and exported under, and its next revision
      * supersedes it rather than colliding with it. Recomputing here would break
      * every checksum in a bundle to no purpose.
+     */
+    apply: (bundle) => bundle,
+  },
+  {
+    from: 3,
+    to: 4,
+    describe: "adds withdrawn-contradiction history to lessons",
+    /**
+     * Identity, for the same reason as the two steps before it: version 4 only
+     * ADDS an optional field. A lesson with no withdrawals is already a valid
+     * version-4 lesson, and back-filling one would invent a human decision that
+     * nobody made.
      */
     apply: (bundle) => bundle,
   },

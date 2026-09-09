@@ -50,13 +50,43 @@ function assertNotRevoked(lesson: Lesson, action: string): void {
  * else is true of it.
  */
 function assertNoContradiction(lesson: Lesson, action: string): void {
-  if (lesson.contradictionIds.length > 0 || lesson.status === "contradicted") {
+  const unresolved = unresolvedContradictions(lesson);
+  if (unresolved.length > 0 || lesson.status === "contradicted") {
     refuse(
       "CONTRADICTION_BLOCKS_PROMOTION",
-      `Cannot ${action}: lesson "${lesson.id}" has ${lesson.contradictionIds.length} unresolved contradiction(s).`,
-      { lessonId: lesson.id, contradictionIds: lesson.contradictionIds },
+      `Cannot ${action}: lesson "${lesson.id}" has ${unresolved.length} unresolved contradiction(s).`,
+      { lessonId: lesson.id, contradictionIds: unresolved },
     );
   }
+}
+
+/**
+ * Contradictions still standing: recorded, and not withdrawn by a human.
+ *
+ * Withdrawal is additive rather than destructive -- the evidence id stays in
+ * `contradictionIds` and is also listed in `withdrawnContradictions` -- so the
+ * record shows both that the contradiction happened and that it was set aside.
+ * Deleting the id would have been simpler and would have erased the history this
+ * whole store exists to keep.
+ */
+export function unresolvedContradictions(lesson: Lesson): string[] {
+  const withdrawn = new Set((lesson.withdrawnContradictions ?? []).map((w) => w.evidenceId));
+  return lesson.contradictionIds.filter((id) => !withdrawn.has(id));
+}
+
+/**
+ * The rung a lesson returns to when its last contradiction is withdrawn.
+ *
+ * Derived from the record rather than stored. A `previousStatus` field would be a
+ * second source of truth about the same thing, and the fields it would duplicate
+ * -- approval and reuse -- are exactly the ones that already say which rung was
+ * reached.
+ */
+function rungFor(lesson: Lesson): Lesson["status"] {
+  if (lesson.status === "revoked") return "revoked";
+  if (lesson.approvedByHumanAt) return "approved";
+  if (lesson.reuseCount > 0) return "qualified";
+  return "proposed";
 }
 
 /* ------------------------------------------------------------------ propose -- */
@@ -281,6 +311,62 @@ export function revokeLesson(storage: StorageAdapter, lessonId: string, reason: 
       revokedReason: reason,
       updatedAt: timestamp,
       // History is retained in full: evidence, contradictions and reuse all survive.
+    };
+    tx.putLesson(updated);
+    return updated;
+  });
+}
+
+/**
+ * Withdraws one contradiction. Human only, and reason required.
+ *
+ * Ruling 9's shape, applied to the inverse operation. `recordContradiction` sets
+ * `status: "contradicted"` from a SINGLE evidence record, `assertNoContradiction`
+ * then blocks both reuse and approval permanently, and `INJECTABLE_STATUSES`
+ * removes the lesson from every packet. Until now there was no path back
+ * anywhere in `src/` -- so one mis-attributed failure silently deleted good
+ * guidance forever, and nothing reported that it had.
+ *
+ * Deliberately NOT automated. A retirement report may say a lesson looks
+ * contradicted in error; acting on that is a human act, exposed on the CLI and
+ * absent from the MCP surface by construction, exactly as approval is.
+ *
+ * The status returns to the rung the record itself proves was reached, and only
+ * once the LAST unresolved contradiction is withdrawn -- setting a lesson back to
+ * `approved` while another contradiction still stands would be the promotion this
+ * gate exists to refuse.
+ */
+export function withdrawContradiction(
+  storage: StorageAdapter,
+  lessonId: string,
+  evidenceId: string,
+  reason: string,
+  now?: string,
+): Lesson {
+  if (!reason || reason.trim().length === 0) {
+    refuse("VALIDATION_FAILED", "Withdrawing a contradiction requires a reason.", { lessonId, evidenceId });
+  }
+  return storage.transact((tx) => {
+    const lesson = requireLesson(tx, lessonId);
+    if (!lesson.contradictionIds.includes(evidenceId)) {
+      refuse(
+        "VALIDATION_FAILED",
+        `Lesson "${lessonId}" carries no contradiction "${evidenceId}".`,
+        { lessonId, evidenceId, contradictionIds: lesson.contradictionIds },
+      );
+    }
+    const already = lesson.withdrawnContradictions ?? [];
+    if (already.some((w) => w.evidenceId === evidenceId)) return lesson;
+
+    const timestamp = now ?? new Date().toISOString();
+    const withdrawnContradictions = [...already, { evidenceId, reason, at: timestamp }];
+    const remaining = unresolvedContradictions({ ...lesson, withdrawnContradictions });
+
+    const updated: Lesson = {
+      ...lesson,
+      withdrawnContradictions,
+      status: remaining.length === 0 ? rungFor(lesson) : lesson.status,
+      updatedAt: timestamp,
     };
     tx.putLesson(updated);
     return updated;

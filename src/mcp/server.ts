@@ -95,6 +95,10 @@ export const READ_ONLY_TOOLS = [
 export const FORBIDDEN_TOOL_PATTERNS = [
   "approve", "revoke", "admit", "rehome", "re_home",
   "propose", "append", "delete", "write", "import", "promote", "qualify",
+  /* Setting aside a contradiction restores a lesson's eligibility, which is a
+     promotion by another name. It belongs beside `approve` on this list, and its
+     absence here would have been an omission rather than a decision. */
+  "withdraw",
 ] as const;
 
 interface JsonRpcRequest {

@@ -131,6 +131,10 @@ export const lessonSchema = facetsSchema.extend({
   approvedBy: identifier.optional(),
   revokedAt: isoDateTime.optional(),
   revokedReason: shortText.optional(),
+  withdrawnContradictions: z
+    .array(z.object({ evidenceId: identifier, reason: shortText, at: isoDateTime }))
+    .max(64)
+    .optional(),
   reuseCount: z.number().int().nonnegative(),
   deviationIds: z.array(identifier),
 });

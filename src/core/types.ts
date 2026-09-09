@@ -251,6 +251,17 @@ export interface Lesson extends Facets {
   approvedBy?: string;
   revokedAt?: string;
   revokedReason?: string;
+  /**
+   * Contradictions a human has withdrawn, and the reasons, newest last.
+   *
+   * The ids are NOT removed from `contradictionIds`. One evidence record used to
+   * demote an approved lesson permanently, with no path back anywhere in the
+   * codebase — so a single mis-attributed failure could silently delete good
+   * guidance forever. Withdrawing is therefore additive: both lists survive, and
+   * the record shows the contradiction happened AND that it was withdrawn, which
+   * is strictly more history than either list alone.
+   */
+  withdrawnContradictions?: { readonly evidenceId: string; readonly reason: string; readonly at: string }[];
   /** Count of distinct episodes in which this lesson was successfully reused. */
   reuseCount: number;
   /** Deviations observed against this lesson (Ruling 7); not itself a contradiction. */

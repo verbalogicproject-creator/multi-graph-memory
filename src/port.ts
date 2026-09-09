@@ -27,6 +27,7 @@ import {
   recordContradiction,
   recordReuse,
   revokeLesson,
+  withdrawContradiction,
 } from "./core/lessons.ts";
 import {
   evaluateDeviation,
@@ -182,6 +183,15 @@ export class GraphMemory {
 
   revokeLesson(lessonId: string, reason: string, now?: string): Lesson {
     return revokeLesson(this.storage, lessonId, reason, now);
+  }
+
+  /**
+   * Human only, like approval and revocation, and for the same reason: one
+   * evidence record demotes a lesson permanently, so setting that aside is a
+   * judgement no model may make. Absent from the MCP surface by construction.
+   */
+  withdrawContradiction(lessonId: string, evidenceId: string, reason: string, now?: string): Lesson {
+    return withdrawContradiction(this.storage, lessonId, evidenceId, reason, now);
   }
 
   /* ---------------------------------------------------------- portability -- */

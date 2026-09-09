@@ -41,6 +41,8 @@ multi-memory — governed episodic and lesson memory
   multi-memory lesson show <lessonId>
   multi-memory lesson approve <lessonId> --by <name>      (human only)
   multi-memory lesson revoke  <lessonId> --reason <text>  (human only)
+  multi-memory lesson withdraw-contradiction <lessonId> --evidence <id> --reason <text>
+                                                          (human only)
   multi-memory episode list [--provider P] [--model M]
   multi-memory episode show <episodeId>
   multi-memory events [--kind K] [--episode ID] [--provider P] [--model M]
@@ -340,8 +342,33 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
           return `Revoked ${lesson.id} — ${lesson.revokedReason}\n  History retained: reuse=${lesson.reuseCount}, contradictions=${lesson.contradictionIds.length}`;
         }
 
+        /* The inverse of a contradiction, and human-only for the same reason
+           approval is: it restores a lesson's eligibility, which is a promotion
+           by another name. Absent from the MCP surface by construction. */
+        case "withdraw-contradiction": {
+          const id = args.positional[1] ?? "";
+          const evidenceId = flagString(args.flags, "evidence");
+          const reason = flagString(args.flags, "reason");
+          if (!evidenceId || !reason) {
+            return [
+              "Usage: multi-memory lesson withdraw-contradiction <lessonId> --evidence <id> --reason <text>",
+              "",
+              "  One evidence record demotes a lesson permanently and removes it from every",
+              "  packet. Setting that aside is a human judgement and needs both the record it",
+              "  concerns and the reason it was wrong.",
+            ].join("\n");
+          }
+          const lesson = memory.withdrawContradiction(id, evidenceId, reason);
+          const still = lesson.contradictionIds.length - (lesson.withdrawnContradictions?.length ?? 0);
+          return [
+            `Withdrew contradiction ${evidenceId} from ${lesson.id} — ${reason}`,
+            `  Status: ${lesson.status}${still > 0 ? ` (${still} contradiction(s) still standing)` : ""}`,
+            `  History retained: the contradiction is still recorded, and now so is its withdrawal.`,
+          ].join("\n");
+        }
+
         default:
-          return "Usage: multi-memory lesson list|show|approve|revoke";
+          return "Usage: multi-memory lesson list|show|approve|revoke|withdraw-contradiction";
       }
     }
 

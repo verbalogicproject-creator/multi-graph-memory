@@ -2,8 +2,26 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GraphMemoryError } from "../src/core/errors.ts";
 import { recordEvidence } from "../src/core/evidence.ts";
-import { approveLesson, getLesson, recordContradiction, recordReuse, revokeLesson } from "../src/core/lessons.ts";
+import {
+  approveLesson,
+  getLesson,
+  recordContradiction,
+  recordReuse,
+  revokeLesson,
+  unresolvedContradictions,
+  withdrawContradiction,
+} from "../src/core/lessons.ts";
 import { PROJECT, reuseEpisode, seedProposedLesson, T2 } from "./helpers/factory.ts";
+
+/** `assert.throws` returns undefined, so capture the error to inspect its code. */
+function caught(fn: () => unknown): unknown {
+  try {
+    fn();
+  } catch (error) {
+    return error;
+  }
+  assert.fail("expected a refusal");
+}
 
 function code(err: unknown): string | undefined {
   return err instanceof GraphMemoryError ? err.code : undefined;
@@ -84,4 +102,71 @@ test("contradiction requires real evidence", () => {
     () => recordContradiction(s.storage, s.lessonId, "evd_nope"),
     (e: unknown) => code(e) === "VALIDATION_FAILED",
   );
+});
+
+/* ------------------------------------------------------- withdrawal (human) -- */
+
+test("a withdrawn contradiction restores eligibility", () => {
+  // Before this existed there was NO path back anywhere in src/. One evidence
+  // record set `contradicted`, that blocked reuse and approval permanently, and
+  // INJECTABLE_STATUSES removed the lesson from every packet. A single
+  // mis-attributed failure therefore deleted good guidance forever, silently.
+  const s = seedProposedLesson();
+  const evidence = contradictingEvidence(s.storage);
+  const contradicted = recordContradiction(s.storage, s.lessonId, evidence.id);
+  assert.equal(contradicted.status, "contradicted");
+
+  const restored = withdrawContradiction(s.storage, s.lessonId, evidence.id, "misattributed to the wrong build");
+  assert.equal(restored.status, "proposed", "back to the rung the record proves it reached");
+
+  // History is retained in full: the contradiction is still recorded, and so is
+  // its withdrawal. Deleting the id would have been simpler and would have
+  // erased exactly what this store exists to keep.
+  assert.ok(restored.contradictionIds.includes(evidence.id));
+  assert.equal(restored.withdrawnContradictions?.length, 1);
+  assert.equal(restored.withdrawnContradictions?.[0]?.reason, "misattributed to the wrong build");
+});
+
+test("withdrawing a contradiction requires a reason", () => {
+  const s = seedProposedLesson();
+  const evidence = contradictingEvidence(s.storage);
+  recordContradiction(s.storage, s.lessonId, evidence.id);
+
+  const error = caught(() => withdrawContradiction(s.storage, s.lessonId, evidence.id, "   "));
+  assert.equal(code(error), "VALIDATION_FAILED");
+});
+
+test("a lesson still carrying another contradiction is not restored", () => {
+  // Restoring to `approved` while a second contradiction still stands would be
+  // exactly the promotion this gate exists to refuse.
+  const s = seedProposedLesson();
+  const first = contradictingEvidence(s.storage);
+  const second = recordEvidence(s.storage, {
+    projectId: PROJECT,
+    kind: "verification.result",
+    ref: "run://second-contradiction",
+  });
+  recordContradiction(s.storage, s.lessonId, first.id);
+  const both = recordContradiction(s.storage, s.lessonId, second.id);
+  assert.equal(both.contradictionIds.length, 2);
+
+  const partial = withdrawContradiction(s.storage, s.lessonId, first.id, "the first was wrong");
+  assert.equal(partial.status, "contradicted", "one withdrawal does not clear two contradictions");
+  assert.deepEqual(unresolvedContradictions(partial), [second.id]);
+});
+
+test("withdrawing an unrecorded contradiction is refused, not ignored", () => {
+  const s = seedProposedLesson();
+  const error = caught(() => withdrawContradiction(s.storage, s.lessonId, "evd_never", "because"));
+  assert.equal(code(error), "VALIDATION_FAILED");
+});
+
+test("withdrawing twice is idempotent rather than duplicating the history", () => {
+  const s = seedProposedLesson();
+  const evidence = contradictingEvidence(s.storage);
+  recordContradiction(s.storage, s.lessonId, evidence.id);
+  withdrawContradiction(s.storage, s.lessonId, evidence.id, "once");
+  const again = withdrawContradiction(s.storage, s.lessonId, evidence.id, "twice");
+  assert.equal(again.withdrawnContradictions?.length, 1);
+  assert.equal(again.withdrawnContradictions?.[0]?.reason, "once", "the first reason stands");
 });
