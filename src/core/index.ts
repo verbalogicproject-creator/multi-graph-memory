@@ -3,6 +3,7 @@
 export * from "./types.ts";
 export * from "./errors.ts";
 export * from "./canonical.ts";
+export * from "./component.ts";
 export * from "./redaction.ts";
 export * from "./schema.ts";
 export * from "./scope.ts";

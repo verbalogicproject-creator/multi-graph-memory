@@ -20,6 +20,15 @@ export * from "./visualization/index.ts";
 export * from "./docs/frontmatter.ts";
 export * from "./docs/projector.ts";
 export * from "./docs/ingest.ts";
+// `kg` and `docs/frontmatter` both call their result an `IntegrityReport`, and
+// they mean different things: one is a typed graph's structural soundness, the
+// other is whether a projected document is safe to overwrite. The graph one is
+// aliased at this boundary rather than renamed at its source, so the parity
+// fixture against the Python original keeps naming it what the Python does.
+export * from "./kg/types.ts";
+export { CHECKS, ERROR_CHECKS, byCheck, checkIntegrity, errorsOf, findCycle, warningsOf } from "./kg/integrity.ts";
+export type { CheckName, Severity, Issue as GraphIssue, IntegrityReport as GraphIntegrityReport } from "./kg/integrity.ts";
+export * from "./structure/index.ts";
 export * from "./control/index.ts";
 export * from "./mcp/server.ts";
 

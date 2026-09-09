@@ -41,7 +41,23 @@ function walk(dir, out = []) {
   return out;
 }
 
-function importsOf(source) {
+/**
+ * Strip comments before scanning for imports.
+ *
+ * Without this the scanner reads prose. A doc comment in `src/core/component.ts`
+ * containing the words `from "malformed"` was reported as core importing an
+ * unapproved package, which is a guard firing on documentation -- and a guard
+ * that cries wolf is one people learn to skip past. Strings are left alone:
+ * removing them would risk hiding a real specifier.
+ */
+function stripComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+}
+
+function importsOf(rawSource) {
+  const source = stripComments(rawSource);
   const specifiers = [];
   const re = /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s+["']([^"']+)["']/g;
   let match;
