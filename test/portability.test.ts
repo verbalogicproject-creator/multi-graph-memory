@@ -174,7 +174,9 @@ test("a re-homed record's id still authenticates its own content", () => {
   for (const lesson of listLessons(fresh, { projectId: "renamed" })) {
     assert.equal(
       lesson.id,
-      deriveLessonId(lesson.projectId, lesson.trigger, lesson.recommendation, lesson.domain),
+      // The component is part of lesson identity: two lessons differing only by
+      // file are two lessons, and while it was excluded they collided.
+      deriveLessonId(lesson.projectId, lesson.trigger, lesson.recommendation, lesson.domain, lesson.component),
       "lesson id must re-derive to itself",
     );
   }

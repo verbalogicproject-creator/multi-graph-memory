@@ -116,8 +116,32 @@ export function deriveEpisodeId(projectId: string, objective: string, baseRevisi
   return `epi_${contentDigest({ projectId, objective, baseRevisionId, openedAt })}`;
 }
 
-export function deriveLessonId(projectId: string, trigger: string, recommendation: string, domain: string): string {
-  return `les_${contentDigest({ projectId, trigger, recommendation, domain })}`;
+/**
+ * Deterministic lesson identity, including the component when the proposer named one.
+ *
+ * The component belongs in the identity because a lesson about `providers/gemini.js`
+ * and the same guidance about `server.js` are two lessons, not one. While it was
+ * excluded they collided: `proposeLesson` returns the existing row on a match, so
+ * the FIRST file to raise a given trigger kept the component permanently and every
+ * later file silently inherited it. That is the defect blocking a file-scoped
+ * lesson producer (roadmap R1).
+ *
+ * Folded in only when present, exactly as `deriveEvidenceId` folds in a digest, so
+ * every id derived before this change is byte-identical afterwards — and the five
+ * lessons in this estate all carry a NULL component.
+ */
+export function deriveLessonId(
+  projectId: string,
+  trigger: string,
+  recommendation: string,
+  domain: string,
+  component?: string,
+): string {
+  const identity =
+    component === undefined
+      ? { projectId, trigger, recommendation, domain }
+      : { projectId, trigger, recommendation, domain, component };
+  return `les_${contentDigest(identity)}`;
 }
 
 /**

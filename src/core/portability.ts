@@ -186,7 +186,7 @@ export function rehomeRecords(
       if (reuse === undefined) delete moved.reuseEpisodeId;
       else moved.reuseEpisodeId = reuse;
     }
-    moved.id = deriveLessonId(moved.projectId, moved.trigger, moved.recommendation, moved.domain);
+    moved.id = deriveLessonId(moved.projectId, moved.trigger, moved.recommendation, moved.domain, moved.component);
     return moved;
   });
 

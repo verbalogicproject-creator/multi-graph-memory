@@ -80,7 +80,7 @@ export function proposeLesson(storage: StorageAdapter, proposal: LessonProposal,
       assertProjectMatch(episode.projectId, { workspace: "default", projectId: input.projectId }, "source episode");
     }
 
-    const id = deriveLessonId(input.projectId, input.trigger, input.recommendation, input.domain);
+    const id = deriveLessonId(input.projectId, input.trigger, input.recommendation, input.domain, input.component);
     const existing = tx.getLesson(id);
     if (existing) return existing;
 
