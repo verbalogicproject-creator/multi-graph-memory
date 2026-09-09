@@ -1,0 +1,106 @@
+name: ci
+
+# Three jobs, because this package makes three separate promises and only one of
+# them was ever checked automatically.
+#
+#   verify       the package builds, typechecks and its suite passes
+#   pure         it does all of that with the optional provider REMOVED
+#   no-optional  a clean install with --omit=optional builds and passes
+#
+# The third job exists because it found a real defect the moment it was written.
+# `@google/genai` is an optionalDependency imported lazily at runtime, and the
+# runtime seam was correct -- but the import specifier was a LITERAL, so tsc
+# resolved it at build time and `npm run build` failed with TS2307 whenever the
+# package was absent. `verify:pure` went green throughout, because it ran
+# `node --test`, which strips types and never asks the resolver for anything.
+# The check existed, passed, and was never looking at the half that broke.
+# `prepare` runs the build, so this also broke every directory install --
+# including multi-app's `file:../multi-graph-memory`.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Nothing here may reach the network or a provider. Set empty rather than
+  # unset so a step that reads them gets a definite empty value.
+  GEMINI_API_KEY: ""
+  GOOGLE_API_KEY: ""
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # package.json declares engines.node >=24. Native TypeScript type
+          # stripping and node:sqlite are both load-bearing here, so this is a
+          # floor, not a preference.
+          node-version: "24"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Boundaries — core may not reach a sibling layer
+        run: npm run check:boundaries
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build, and check the published surface
+        run: npm run check:dist
+
+  pure:
+    # Ruling 2, proven rather than asserted: no provider package, no key, no
+    # network. Its own job because it mutates node_modules while it runs.
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: verify:pure
+        run: npm run verify:pure
+
+  no-optional:
+    # The $0 floor for a consumer who installs without optional dependencies.
+    # blessed must be absent and the TUI must degrade to a named install line;
+    # ws must be PRESENT, because it is a real dependency and inheriting it from
+    # an optional package's tree is the phantom-dependency form of "presence is
+    # not validity".
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install with no optional dependencies
+        run: npm ci --omit=optional
+
+      - name: Assert the optional/required split is what the manifest claims
+        run: |
+          test ! -d node_modules/blessed || { echo "blessed resolved under --omit=optional"; exit 1; }
+          test -d node_modules/ws || { echo "ws did not resolve; it is a declared dependency"; exit 1; }
+          echo "ok: blessed absent, ws present"
+
+      - name: Build without the optional provider
+        run: npm run build
+
+      - name: Tests without the optional provider
+        run: npm test

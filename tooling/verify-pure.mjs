@@ -6,9 +6,17 @@
  * dependency, or provider call."
  *
  * A README claim is not evidence. This temporarily removes @google/genai from
- * node_modules, clears GEMINI_API_KEY, runs the boundary policy and the entire
- * suite, and restores afterwards. If anything in the package quietly depends on
- * the provider, this fails.
+ * node_modules, clears GEMINI_API_KEY, runs the boundary policy, the TYPE CHECK
+ * and the entire suite, and restores afterwards. If anything in the package
+ * quietly depends on the provider, this fails.
+ *
+ * The typecheck is here because leaving it out was a false green of exactly the
+ * kind this file exists to prevent. `node --test` strips types and never asks
+ * the resolver to find a module, so the suite passed with the provider absent
+ * while `npm run build` -- and therefore `prepare`, and therefore every
+ * directory install, including multi-app's `file:../multi-graph-memory` --
+ * failed with TS2307 on a literal `import("@google/genai")`. The check ran, went
+ * green, and was never looking at the half that broke.
  */
 
 import { execFileSync } from "node:child_process";
@@ -39,9 +47,11 @@ try {
   console.log("• GEMINI_API_KEY cleared from the environment\n");
 
   run("node", ["tooling/check-boundaries.mjs"]);
+  // Before the suite: a resolver error here is the cheaper, clearer failure.
+  run("npx", ["tsc", "--noEmit"]);
   run("node", ["--test", "test/**/*.test.ts"]);
 
-  console.log("\n✔ verify:pure — the package passes with no provider package, no key and no network.");
+  console.log("\n✔ verify:pure — the package typechecks and passes with no provider package, no key and no network.");
 } catch (error) {
   console.error("\n✖ verify:pure FAILED: something depends on the provider, a key, or the network.");
   process.exitCode = 1;

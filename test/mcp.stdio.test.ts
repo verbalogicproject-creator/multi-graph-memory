@@ -65,7 +65,12 @@ async function withServer(fn: (send: (msg: unknown) => void, responses: () => Js
   return stderr;
 }
 
-const waitForCount = async (get: () => unknown[], count: number, timeoutMs = 5000): Promise<void> => {
+// 20s, not 5s. The bar is "the handshake completes", never "it completes within
+// five seconds": spawning the server type-strips the whole module graph, and on a
+// cold cache under full-suite load that measured 5081ms here -- a flake that fails
+// the run for a reason the test does not claim to be testing. Still bounded, so a
+// server that genuinely never answers still fails rather than hanging.
+const waitForCount = async (get: () => unknown[], count: number, timeoutMs = 20000): Promise<void> => {
   const start = Date.now();
   while (get().length < count) {
     if (Date.now() - start > timeoutMs) {

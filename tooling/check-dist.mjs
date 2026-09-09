@@ -27,7 +27,11 @@ const { GraphMemory, ModelContextPort, MemoryStorageAdapter, CURRENT_SCHEMA_VERS
 
 assert.equal(typeof GraphMemory, "function", "GraphMemory must be reachable from the built entry point");
 assert.equal(typeof ModelContextPort, "function");
-assert.equal(CURRENT_SCHEMA_VERSION, 2);
+// Pinned as a literal on purpose: a schema bump must be a deliberate edit here,
+// not something that rides along silently in a build. Update it in the same
+// commit as the MIGRATIONS ladder step that raises it.
+//   2 -> 3  evidence carries an optional supersedes pointer
+assert.equal(CURRENT_SCHEMA_VERSION, 3);
 
 const storage = new MemoryStorageAdapter();
 storage.open();

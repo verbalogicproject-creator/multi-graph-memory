@@ -97,8 +97,16 @@ export class GeminiEmbeddingProvider implements EmbeddingAdapter {
   private async ensureClient(): Promise<GenAIClient> {
     if (this.client) return this.client;
     let module: { GoogleGenAI: new (options: { apiKey: string }) => GenAIClient };
+    // The specifier is held in a variable on purpose. tsc resolves a LITERAL
+    // dynamic import at build time, so writing it inline made `npm run build`
+    // fail with TS2307 whenever the optional package was absent -- the exact
+    // configuration `verify:pure` says is supported. It passed only because it
+    // runs `node --test`, which strips types and never typechecks. Indirection
+    // leaves runtime behaviour identical and puts the check where it belongs,
+    // in the catch below.
+    const specifier = "@google/genai";
     try {
-      module = (await import("@google/genai")) as never;
+      module = (await import(specifier)) as never;
     } catch {
       refuse(
         "VALIDATION_FAILED",
