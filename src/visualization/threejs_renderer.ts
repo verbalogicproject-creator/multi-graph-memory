@@ -48,6 +48,14 @@ export interface VisNode {
   val?: number;
   /** Connected-component index, assigned by the exporter. */
   cluster?: number;
+  /**
+   * Which layer of the one graph this node came from.
+   *
+   * Optional so every existing caller and fixture keeps working unchanged; a
+   * node without one is governance, which is all this renderer drew before
+   * the derived and context strata were joined to it.
+   */
+  stratum?: "governance" | "structure" | "context";
 }
 
 export interface VisEdge {
@@ -61,11 +69,128 @@ export interface GraphData {
   edges: VisEdge[];
 }
 
+/**
+ * What one layer contributed, for the note the page prints under its title.
+ *
+ * Declared structurally rather than imported from `strata.ts`, which imports
+ * `VisNode` from here -- a direct import would be a cycle. The shape is the
+ * contract; `StratumReport` satisfies it.
+ */
+export interface StratumSummary {
+  readonly stratum: string;
+  readonly available: boolean;
+  readonly reason?: string;
+  readonly nodes: number;
+  readonly edges: number;
+}
+
+/**
+ * The layers, and the honest account of the ones that are not here.
+ *
+ * A picture is an excellent place for a zero to hide: a layer that failed to
+ * load and a layer that is genuinely empty look identical once drawn, and both
+ * look like a layer that was never asked for. So each one states its count, and
+ * a layer contributing nothing states why in the page itself rather than in a
+ * log line nobody reads.
+ */
+export function strataNoteHtml(strata: readonly StratumSummary[]): string {
+  if (strata.length === 0) return "";
+  return strata
+    .map((s) => {
+      const label = escapeHtml(s.stratum);
+      if (!s.available) {
+        return `<span class="stratum-row absent">${label}: none — ${escapeHtml(s.reason ?? "not available")}</span>`;
+      }
+      const counts = `${s.nodes} node${s.nodes === 1 ? "" : "s"}, ${s.edges} edge${s.edges === 1 ? "" : "s"}`;
+      const why = s.reason ? ` — ${escapeHtml(s.reason)}` : "";
+      return `<span class="stratum-row${s.nodes === 0 ? " absent" : ""}">${label}: ${counts}${why}</span>`;
+    })
+    .join("");
+}
+
 /** The page background. Every colour decision below is judged against it. */
 export const BACKGROUND = "#0a0e27";
 
-/** Pinned, and the only external code the page loads. */
-export const EXTERNAL_SCRIPTS = ["https://unpkg.com/3d-force-graph@1"] as const;
+/**
+ * The page loads nothing. This is the list, and it is empty on purpose.
+ *
+ * It used to hold `https://unpkg.com/3d-force-graph@1`, and the test guarding
+ * it was called "the html export is self-contained and pins every external
+ * script" while asserting neither property. `@1` is a major-version *range*:
+ * it resolved to 1.80.0 on the day this changed and to whatever ships next
+ * after that, so two renders of the same data could differ. And a page that
+ * fetches a megabyte at open time is not self-contained -- it does not draw on
+ * a plane, which is where a phone often is.
+ *
+ * The library is vendored at an exact version and inlined instead. That is
+ * already the convention here rather than a new one: claude-arch-inventory
+ * vendors `d3.min.js`, and multi-app's architecture page vendors mermaid and
+ * says "rendered locally (vendored mermaid.js, no CDN)" on the page itself.
+ */
+export const EXTERNAL_SCRIPTS = [] as const;
+
+/**
+ * The vendored renderer library, by exact version.
+ *
+ * The version lives in the filename so a bump is visible in a diff and in
+ * `git log --stat`, not buried in a lockfile. The file's own first line reads
+ * `// Version 1.80.0 3d-force-graph`, which `assertVendoredVersion` checks --
+ * so a file swapped without a rename fails loudly rather than rendering
+ * something else under the same name.
+ */
+export const VENDORED_LIBRARY = "3d-force-graph-1.80.0.min.js";
+export const VENDORED_VERSION = "1.80.0";
+
+/**
+ * Find `vendor/` by walking up, not by a fixed relative path.
+ *
+ * Same reasoning as `src/mcp/version.ts`, and the same bug avoided: this module
+ * sits at `src/visualization/` in the source tree and at `dist/src/visualization/`
+ * once built, so any hard-coded `../../vendor` is right in exactly one of them.
+ * Walking up is right in both, and inside a real install under someone else's
+ * `node_modules/multi-graph-memory/` as well.
+ */
+export function vendoredLibraryPath(startDir: string = import.meta.dirname): string {
+  let dir = startDir;
+  for (;;) {
+    const candidate = path.join(dir, "vendor", VENDORED_LIBRARY);
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      throw new Error(
+        `vendor/${VENDORED_LIBRARY} not found above ${startDir}. The graph export inlines it, ` +
+          `so it must ship with the package -- check that "vendor" is in package.json "files".`,
+      );
+    }
+    dir = parent;
+  }
+}
+
+/** The library's bytes, with its self-declared version checked against ours. */
+export function readVendoredLibrary(startDir?: string): string {
+  const source = fs.readFileSync(vendoredLibraryPath(startDir), "utf8");
+  if (!source.startsWith(`// Version ${VENDORED_VERSION} 3d-force-graph`)) {
+    throw new Error(
+      `vendor/${VENDORED_LIBRARY} does not declare version ${VENDORED_VERSION} on its first line. ` +
+        `The filename is not evidence of the contents; rename the file to match what it actually is.`,
+    );
+  }
+  // Inlining means the HTML parser, not the JS parser, sees these bytes first.
+  // A `</script` anywhere inside would close the tag early and produce a page
+  // that loads without error and draws nothing. Refuse loudly instead of
+  // escaping: an escape that is wrong inside a regex literal fails the same
+  // silent way, and a version bump that introduces the sequence is a decision
+  // a person should make, not one a `.replace()` should paper over.
+  for (const sequence of ["</script", "<!--"]) {
+    if (source.toLowerCase().includes(sequence)) {
+      throw new Error(
+        `vendor/${VENDORED_LIBRARY} contains "${sequence}", which cannot be inlined into a ` +
+          `<script> tag safely. Serve it as a sibling file, or pin a version that does not.`,
+      );
+    }
+  }
+  return source;
+}
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
@@ -129,6 +254,18 @@ export class ThreeJSGraphRenderer {
       "lesson:contradicted": "#fb7185",
       "lesson:revoked": "#8b93a7",
       evidence: "#cbd5e1",
+      // The derived stratum, cooler and flatter than governance on purpose:
+      // structure is what the code *is*, not what was learned about it, and the
+      // eye should be able to tell the two apart before reading a single label.
+      "structure:file": "#8ba3d9",
+      "structure:component": "#5eead4",
+      // Hollow-grey, matching the D3 view: named so an edge never dangles, and
+      // visibly not ours.
+      "structure:external": "#6b7280",
+      // The context stratum. Warm, and only ever one type deep in practice.
+      "context:interface": "#fcd34d",
+      "context:milestone": "#fbbf24",
+      "context:decision": "#f59e0b",
       unknown: "#9aa4b8",
     };
 
@@ -148,6 +285,14 @@ export class ThreeJSGraphRenderer {
       "reused-in": "#4ade80",
       cites: "#5a6274",
       contradicts: "#fb7185",
+      // Structure. Muted, because at 236 imports against 10 governance edges
+      // these would otherwise be the only thing the page looks like.
+      imports: "#3f4657",
+      contains: "#2f3542",
+      renders: "#4a5568",
+      uses_hook: "#565f73",
+      /** The join, drawn. This edge exists in neither file; it *is* the join. */
+      describes: "#e879f9",
     };
   }
 
@@ -163,12 +308,50 @@ export class ThreeJSGraphRenderer {
       .join("");
   }
 
-  public generateHtml(graphData: GraphData, outputPath: string, title: string = "Knowledge Graph 3D"): string {
+  /** Write the page to disk. Returns the path, as it always has. */
+  public generateHtml(
+    graphData: GraphData,
+    outputPath: string,
+    title: string = "Knowledge Graph 3D",
+    strata: readonly StratumSummary[] = [],
+    options: { liveUrl?: string } = {},
+  ): string {
+    const html = this.renderHtml(graphData, title, strata, options);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, html, "utf8");
+    return outputPath;
+  }
+
+  /**
+   * The page, as a string.
+   *
+   * Split out from `generateHtml` so `multi-memory serve` can hold it in
+   * memory instead of writing a file it would immediately read back. Same
+   * bytes either way -- there is no second renderer for the live mode, which
+   * is how the two stay honest about being the same picture.
+   */
+  public renderHtml(
+    graphData: GraphData,
+    title: string = "Knowledge Graph 3D",
+    strata: readonly StratumSummary[] = [],
+    options: { liveUrl?: string } = {},
+  ): string {
     const nodeTypes = new Set(graphData.nodes.map((n) => n.type || "unknown"));
     const colors = this.generateColorPalette(nodeTypes);
     const edgeColors = this.edgePalette();
     const safeTitle = escapeHtml(title);
     const clusterCount = new Set(graphData.nodes.map((n) => n.cluster ?? 0)).size;
+
+    // Governance is what this page has always shown, so it is what opens. The
+    // other two layers are large -- 219 structure nodes against 19 governance
+    // ones for multi-app -- and dropping the reader into all of it at once
+    // buries the thing they came to look at. Every non-governance type starts
+    // hidden, and the existing legend chips already toggle by type, so the
+    // strata buttons below reuse that mechanism rather than adding a second.
+    const hiddenAtStart = [...nodeTypes].filter(
+      (type) => type.startsWith("structure:") || type.startsWith("context:"),
+    );
+    const strataPresent = [...new Set(graphData.nodes.map((n) => n.stratum ?? "governance"))];
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -205,6 +388,16 @@ export class ThreeJSGraphRenderer {
         #title-card { padding: 10px 14px; max-width: 60%; }
         #title-card h1 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: 0.2px; }
         #stats { font-size: 11px; color: var(--ink-dim); margin-top: 3px; font-variant-numeric: tabular-nums; }
+        #strata-note { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
+        .stratum-row { font-size: 10px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+        /* A layer contributing nothing is dimmer, never absent from the list. */
+        .stratum-row.absent { color: #7d8597; font-style: italic; }
+        .btn.stratum.off { opacity: 0.42; text-decoration: line-through; }
+        #live-status { display: flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 10px; color: var(--ink-dim); }
+        #live-dot { width: 7px; height: 7px; border-radius: 50%; background: #6b7280; flex-shrink: 0; }
+        #live-dot.on { background: #4ade80; }
+        #live-dot.warn { background: #fbbf24; }
+        #live-dot.off { background: #f87171; }
         #tools { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
         .btn {
             background: var(--panel); color: var(--ink); border: 1px solid var(--edge);
@@ -282,6 +475,7 @@ export class ThreeJSGraphRenderer {
         }
     </style>
 ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")}
+    <script>${readVendoredLibrary()}</script>
 </head>
 <body>
     <div id="graph-container"></div>
@@ -292,9 +486,18 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
         <div id="title-card" class="panel">
             <h1>${safeTitle}</h1>
             <div id="stats">${graphData.nodes.length} nodes &middot; ${graphData.edges.length} edges &middot; ${clusterCount} cluster${clusterCount === 1 ? "" : "s"}</div>
+            <div id="strata-note">${strataNoteHtml(strata)}</div>
+${options.liveUrl ? `            <div id="live-status"><span id="live-dot" class="off"></span><span id="live-label">live: connecting</span></div>` : ""}
         </div>
         <div id="tools">
             <input id="search" type="search" placeholder="Find..." autocomplete="off" spellcheck="false">
+${strataPresent
+  .filter((s) => s !== "governance")
+  .map(
+    (s) =>
+      `            <button class="btn stratum" data-stratum="${escapeHtml(s)}">${escapeHtml(s)}</button>`,
+  )
+  .join("\n")}
             <button class="btn" id="btn-labels">Labels</button>
             <button class="btn" id="btn-clusters">Clusters</button>
             <button class="btn" id="btn-reset">Reset</button>
@@ -313,29 +516,56 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
     </div>
 
     <script>
-        const graphData = ${safeJson(graphData)};
-        const colors = ${safeJson(colors)};
+        // let, not const: a live session replaces the whole graph in place
+        // when a store changes on disk. A static export never reassigns these,
+        // so the two modes run the same code with one of them simply never
+        // taking the branch.
+        let graphData = ${safeJson(graphData)};
+        let colors = ${safeJson(colors)};
         const edgeColors = ${safeJson(edgeColors)};
         const DIM_NODE = 'rgba(120,132,168,0.16)';
         const DIM_EDGE = 'rgba(120,132,168,0.05)';
 
-        const byId = new Map(graphData.nodes.map(n => [n.id, n]));
-        const neighbours = new Map(graphData.nodes.map(n => [n.id, new Set()]));
-        const incident = new Map(graphData.nodes.map(n => [n.id, []]));
-        for (const e of graphData.edges) {
-            if (!neighbours.has(e.source) || !neighbours.has(e.target)) continue;
-            neighbours.get(e.source).add(e.target);
-            neighbours.get(e.target).add(e.source);
-            incident.get(e.source).push(e);
-            incident.get(e.target).push(e);
+        let byId = new Map();
+        let neighbours = new Map();
+        let incident = new Map();
+
+        /** Rebuild the adjacency indexes from whatever graphData now holds. */
+        function reindex() {
+            byId = new Map(graphData.nodes.map(n => [n.id, n]));
+            neighbours = new Map(graphData.nodes.map(n => [n.id, new Set()]));
+            incident = new Map(graphData.nodes.map(n => [n.id, []]));
+            for (const e of graphData.edges) {
+                if (!neighbours.has(e.source) || !neighbours.has(e.target)) continue;
+                neighbours.get(e.source).add(e.target);
+                neighbours.get(e.target).add(e.source);
+                incident.get(e.source).push(e);
+                incident.get(e.target).push(e);
+            }
         }
+        reindex();
 
         const keyOf = (source, target, type) => source + '>' + target + '>' + type;
 
         /** Distinct hues for cluster mode. Fixed lightness, so every one stays legible. */
         const clusterColor = (index) => 'hsl(' + ((index * 47) % 360) + ', 60%, 64%)';
 
-        const hidden = new Set();
+        const hidden = new Set(${safeJson(hiddenAtStart)});
+        /** Every type belonging to a stratum, so one button toggles the layer. */
+        const typesByStratum = ${safeJson(
+          Object.fromEntries(
+            [...new Set(graphData.nodes.map((n) => n.stratum ?? "governance"))].map((s) => [
+              s,
+              [
+                ...new Set(
+                  graphData.nodes
+                    .filter((n) => (n.stratum ?? "governance") === s)
+                    .map((n) => n.type || "unknown"),
+                ),
+              ],
+            ]),
+          ),
+        )};
         let showLabels = true;
         let clusterMode = false;
         let focus = null;
@@ -570,8 +800,34 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
                 refresh();
             };
 
+            // A stratum button toggles every type in that layer at once. The
+            // legend chips still work per type underneath; this is a shortcut
+            // over the same hidden set, not a second filtering mechanism.
+            for (const btn of document.querySelectorAll('.btn.stratum')) {
+                const types = typesByStratum[btn.dataset.stratum] || [];
+                const isOff = () => types.length > 0 && types.every(t => hidden.has(t));
+                btn.classList.toggle('off', isOff());
+                btn.onclick = () => {
+                    const turningOn = isOff();
+                    for (const type of types) {
+                        if (turningOn) hidden.delete(type); else hidden.add(type);
+                    }
+                    btn.classList.toggle('off', !turningOn);
+                    for (const chip of document.querySelectorAll('.legend-item')) {
+                        chip.classList.toggle('off', hidden.has(chip.dataset.type));
+                    }
+                    focus = null;
+                    selectedId = null;
+                    applyFilters();
+                    rebuildLabels();
+                    refresh();
+                };
+            }
+
             // Legend chips double as type filters.
             for (const chip of document.querySelectorAll('.legend-item')) {
+                // Seeded, not assumed: the non-governance strata start hidden.
+                chip.classList.toggle('off', hidden.has(chip.dataset.type));
                 chip.onclick = () => {
                     const type = chip.dataset.type;
                     if (hidden.has(type)) hidden.delete(type); else hidden.add(type);
@@ -582,6 +838,65 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
                     rebuildLabels();
                     refresh();
                 };
+            }
+
+            // The live feed, when this page is being served rather than saved.
+            //
+            // A static export never reaches this branch. The donor's own "live"
+            // mode is worth naming here: it rendered a pulsing dot and the words
+            // "Live Sync Active" and contained no fetch, no interval and no
+            // socket at all. A status light that is not wired to anything is
+            // worse than none, so this one reports what the connection is
+            // actually doing, disconnections included.
+            ${
+              options.liveUrl
+                ? `
+            (function live() {
+                const dot = document.getElementById('live-dot');
+                const label = document.getElementById('live-label');
+                let backoff = 500;
+                const setState = (cls, text) => {
+                    if (dot) dot.className = cls;
+                    if (label) label.textContent = text;
+                };
+                function connect() {
+                    let socket;
+                    try { socket = new WebSocket(${JSON.stringify(options.liveUrl)}); }
+                    catch (err) { setState('off', 'live: ' + err.message); return; }
+                    socket.onopen = () => { backoff = 500; setState('on', 'live'); };
+                    socket.onmessage = (event) => {
+                        let payload;
+                        try { payload = JSON.parse(event.data); }
+                        catch (err) { setState('warn', 'live: unreadable update'); return; }
+                        if (!payload || payload.type !== 'graph' || !payload.graphData) return;
+                        graphData = payload.graphData;
+                        if (payload.colors) colors = payload.colors;
+                        reindex();
+                        // A node that vanished cannot stay selected or focused.
+                        if (selectedId && !byId.has(selectedId)) { focus = null; selectedId = null; }
+                        applyFilters();
+                        rebuildLabels();
+                        refresh();
+                        const note = document.getElementById('strata-note');
+                        if (note && payload.strataHtml !== undefined) note.innerHTML = payload.strataHtml;
+                        const stats = document.getElementById('stats');
+                        if (stats) stats.textContent =
+                            graphData.nodes.length + ' nodes \u00b7 ' + graphData.edges.length + ' edges';
+                        setState('on', 'live \u00b7 updated ' + new Date().toLocaleTimeString());
+                    };
+                    socket.onclose = () => {
+                        // Say it out loud. A graph that silently stopped updating
+                        // is indistinguishable from a graph that stopped changing.
+                        setState('off', 'live: disconnected, retrying');
+                        setTimeout(connect, backoff);
+                        backoff = Math.min(backoff * 2, 15000);
+                    };
+                    socket.onerror = () => setState('warn', 'live: connection error');
+                }
+                connect();
+            })();
+            `
+                : ""
             }
 
             const search = document.getElementById('search');
@@ -610,8 +925,6 @@ ${EXTERNAL_SCRIPTS.map((src) => `    <script src="${src}"></script>`).join("\n")
 </body>
 </html>`;
 
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, html, "utf8");
-    return outputPath;
+    return html;
   }
 }

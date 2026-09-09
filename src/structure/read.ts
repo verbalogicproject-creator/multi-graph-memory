@@ -131,6 +131,38 @@ export class SqliteStructureIndex implements StructureIndex {
     return { nodes, edges };
   }
 
+  /**
+   * Every node, with the fields a picture needs -- `component` included.
+   *
+   * `typedGraph()` deliberately projects down to what `checkIntegrity` reads:
+   * id, type, name, qualname. That is the right shape for the checker and the
+   * wrong one for the renderer, which needs the file path to label a node and
+   * the join key to link it to the other strata. Two readers, two shapes, one
+   * table.
+   */
+  allNodes(): StructureNode[] {
+    return this.db
+      .prepare(
+        `SELECT id, level, name, qualname, file_path, component, summary
+           FROM nodes ORDER BY file_path, level, name`,
+      )
+      .all()
+      .map(toStructureNode);
+  }
+
+  /** Every edge, source and target as raw row ids matching `allNodes()`. */
+  allEdges(): StructureEdge[] {
+    return (
+      this.db
+        .prepare("SELECT edge_type, source_id, target_id FROM edges ORDER BY id")
+        .all() as Record<string, unknown>[]
+    ).map((r) => ({
+      edgeType: String(r["edge_type"]),
+      sourceId: String(r["source_id"]),
+      targetId: String(r["target_id"]),
+    }));
+  }
+
   /** Run the declared taxonomy over this graph. */
   checkIntegrity(): IntegrityReport {
     return checkIntegrity(this.typedGraph(), STRUCTURE_SCHEMA);

@@ -34,6 +34,7 @@ import { dirname } from "node:path";
 import { assertRedactionBoundary } from "../core/redaction.ts";
 import type { Episode, Evidence, Lesson, ProjectScope } from "../core/types.ts";
 import { ThreeJSGraphRenderer, type GraphData, type VisEdge, type VisNode } from "./threejs_renderer.ts";
+import { readContext, readStructure, type StratumReport } from "./strata.ts";
 
 export type { GraphData, VisEdge, VisNode } from "./threejs_renderer.ts";
 
@@ -56,12 +57,36 @@ export interface GraphSource {
   listEvidence(): Evidence[];
 }
 
+/**
+ * Which other strata to draw, and where they live.
+ *
+ * Both are optional and both default to absent. With neither, the projection is
+ * byte-for-byte what it has always been -- the same optional-capability seam
+ * `hasStructureIndex` already establishes, so a project that has never had a
+ * structure build behaves exactly as it does today.
+ */
+export interface StrataOptions {
+  /** Path to `structure.db`. Absent, or unreadable, means the leg is skipped. */
+  structureDb?: string;
+  /** Path to the portfolio brain. Absent, or unreadable, means the leg is skipped. */
+  contextDb?: string;
+}
+
 export interface GraphProjection {
   scope: ProjectScope;
   generatedAt: string;
   graphData: GraphData;
   colors: Record<string, string>;
   counts: { episodes: number; lessons: number; evidence: number; edges: number };
+  /**
+   * What every layer contributed, and why one contributed nothing.
+   *
+   * Always present, always three entries, even when only governance was asked
+   * for. A stratum that was not requested says so; a stratum that was requested
+   * and could not be read says why. An unexplained zero is the defect this plan
+   * exists to remove, and a picture is a good place for one to hide.
+   */
+  strata: StratumReport[];
 }
 
 function truncate(value: string, limit = 400): string {
@@ -165,7 +190,11 @@ export function assignClusters(nodes: Map<string, VisNode>, edges: readonly VisE
  * Builds the graph. Pure -- no filesystem, no renderer instantiation beyond the
  * colour palette, so it can be asserted on directly in tests.
  */
-export function projectGraph(source: GraphSource, now: Date = new Date()): GraphProjection {
+export function projectGraph(
+  source: GraphSource,
+  now: Date = new Date(),
+  strata: StrataOptions = {},
+): GraphProjection {
   const episodes = source.listEpisodes();
   const lessons = source.listLessons();
   const evidence = source.listEvidence();
@@ -189,6 +218,7 @@ export function projectGraph(source: GraphSource, now: Date = new Date()): Graph
       id: episode.id,
       name: truncate(episode.objective, 60),
       type: episodeType(episode),
+      stratum: "governance",
       description: describeEpisode(episode),
     });
   }
@@ -197,6 +227,7 @@ export function projectGraph(source: GraphSource, now: Date = new Date()): Graph
       id: lesson.id,
       name: truncate(lesson.trigger, 60),
       type: `lesson:${lesson.status}`,
+      stratum: "governance",
       description: describeLesson(lesson),
     });
   }
@@ -205,6 +236,7 @@ export function projectGraph(source: GraphSource, now: Date = new Date()): Graph
       id: item.id,
       name: truncate(item.kind, 60),
       type: "evidence",
+      stratum: "governance",
       description: describeEvidence(item),
     });
   }
@@ -217,6 +249,59 @@ export function projectGraph(source: GraphSource, now: Date = new Date()): Graph
   }
   for (const episode of episodes) {
     for (const lessonId of episode.appliedLessonIds) link(episode.id, lessonId, "applied");
+  }
+
+  const reports: StratumReport[] = [
+    {
+      stratum: "governance",
+      available: true,
+      nodes: nodes.size,
+      edges: edges.length,
+      ...(nodes.size === 0 ? { reason: "this cluster holds no episodes, lessons or evidence yet" } : {}),
+    },
+  ];
+
+  // The derived stratum, and the component index the join needs. Read first,
+  // because the context leg links *into* it.
+  let componentIndex: ReadonlyMap<string, string> = new Map();
+  if (strata.structureDb) {
+    const structure = readStructure(strata.structureDb);
+    for (const node of structure.nodes) nodes.set(node.id, node);
+    edges.push(...structure.edges);
+    componentIndex = structure.componentIndex;
+    reports.push(structure.report);
+  } else {
+    reports.push({
+      stratum: "structure",
+      available: false,
+      nodes: 0,
+      edges: 0,
+      reason: "not requested — pass --structure-db, or --strata structure to resolve it by convention",
+    });
+  }
+
+  if (strata.contextDb) {
+    const context = readContext(strata.contextDb, componentIndex);
+    for (const node of context.nodes) nodes.set(node.id, node);
+    edges.push(...context.edges);
+    reports.push(context.report);
+  } else {
+    reports.push({
+      stratum: "context",
+      available: false,
+      nodes: 0,
+      edges: 0,
+      reason: "not requested — pass --context-db, or --strata context to resolve it from PMEM_BRAIN_DB",
+    });
+  }
+
+  // Recount degree across every stratum now that they are all present, so a
+  // node's size reflects the whole graph rather than the layer it came from.
+  degree.clear();
+  for (const edge of edges) {
+    if (!nodes.has(edge.source) || !nodes.has(edge.target)) continue;
+    bump(edge.source);
+    bump(edge.target);
   }
 
   // Degree centrality drives node size, matching the donor's "topological gravity".
@@ -249,6 +334,7 @@ export function projectGraph(source: GraphSource, now: Date = new Date()): Graph
       evidence: evidence.length,
       edges: edges.length,
     },
+    strata: reports,
   };
 }
 
@@ -256,11 +342,12 @@ export function projectGraph(source: GraphSource, now: Date = new Date()): Graph
 export function serializeGraph(projection: GraphProjection): string {
   return `${JSON.stringify(
     {
-      // 2: nodes carry `cluster`, the connected-component index.
-      schemaVersion: 2,
+      // 3: nodes carry `stratum`, and the envelope carries a per-stratum report.
+      schemaVersion: 3,
       scope: projection.scope,
       generatedAt: projection.generatedAt,
       counts: projection.counts,
+      strata: projection.strata,
       edgeKinds: EDGE_KINDS,
       nodes: projection.graphData.nodes,
       edges: projection.graphData.edges,
@@ -270,8 +357,13 @@ export function serializeGraph(projection: GraphProjection): string {
   )}\n`;
 }
 
-export function exportGraphJson(source: GraphSource, outputPath: string, now?: Date): GraphProjection {
-  const projection = projectGraph(source, now);
+export function exportGraphJson(
+  source: GraphSource,
+  outputPath: string,
+  now?: Date,
+  strata?: StrataOptions,
+): GraphProjection {
+  const projection = projectGraph(source, now, strata);
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, serializeGraph(projection), "utf8");
   return projection;
@@ -283,12 +375,14 @@ export function exportGraphHtml(
   outputPath: string,
   title?: string,
   now?: Date,
+  strata?: StrataOptions,
 ): GraphProjection {
-  const projection = projectGraph(source, now);
+  const projection = projectGraph(source, now, strata);
   new ThreeJSGraphRenderer().generateHtml(
     projection.graphData,
     outputPath,
     title ?? `${projection.scope.workspace}/${projection.scope.projectId} — memory graph`,
+    projection.strata,
   );
   return projection;
 }

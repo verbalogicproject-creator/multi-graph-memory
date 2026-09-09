@@ -17,7 +17,8 @@ import { GraphMemory } from "../port.ts";
 import { renderPacket } from "../core/packet.ts";
 import { isGraphMemoryError } from "../core/errors.ts";
 import { projectDocuments } from "../docs/projector.ts";
-import { exportGraphHtml, exportGraphJson } from "../visualization/index.ts";
+import { exportGraphHtml, exportGraphJson, type StrataOptions } from "../visualization/index.ts";
+import { startServe, DEFAULT_HOST, DEFAULT_PORT } from "../serve/index.ts";
 import { ingestAuthoredDocument } from "../docs/ingest.ts";
 import { ControlStore } from "../control/registry.ts";
 import { federatedQuery } from "../control/federation.ts";
@@ -28,7 +29,7 @@ import type { LessonDomain, LessonStatus, MemoryEventKind } from "../core/types.
 export const HELP = `
 multi-memory — governed episodic and lesson memory
 
-  multi-memory                              interactive session
+  multi-memory                              the terminal UI (menu if unavailable)
   multi-memory project status
   multi-memory project register                          add this cluster to the control tier
   multi-memory admit --workspace W --by NAME --purpose T [--projects a,b]
@@ -45,6 +46,11 @@ multi-memory — governed episodic and lesson memory
   multi-memory docs generate [--dir <path>]
   multi-memory docs ingest <file>
   multi-memory graph export <file.html|file.json>       3D graph, or nodes+edges
+                      [--strata governance,structure,context]
+                      [--structure-db <path>] [--context-db <path>]
+  multi-memory tui [--strata structure,context]          health · browse · ask · act
+  multi-memory serve [--port N] [--host H] [--api-key K]
+                      [--strata structure,context]   the graph, live in a browser
   multi-memory sync export <file>
   multi-memory sync import <file>
   multi-memory backup <file.db>                         consistent copy, safe while running
@@ -123,6 +129,47 @@ function out(value: unknown, asJson: boolean): string {
 }
 
 /** Executes one command and returns what should be printed. Pure of process.exit. */
+const GRAPH_USAGE = [
+  "Usage: multi-memory graph export <file.html|file.json>",
+  "         [--strata governance,structure,context] [--structure-db PATH] [--context-db PATH]",
+  "",
+  "  governance is always drawn. structure and context are opt-in and start hidden",
+  "  in the page; the strata buttons reveal them.",
+].join("\n");
+
+/**
+ * Where the other two strata live.
+ *
+ * An explicit path always wins. Otherwise `--strata` names a layer and it is
+ * resolved by the convention each one already follows: structure.db sits beside
+ * builder.db in the cluster directory, and the portfolio brain is wherever
+ * PMEM_BRAIN_DB points -- the same variable `session_start_hook.sh` reads, so
+ * there is one answer to "which brain" on this machine rather than two.
+ *
+ * Naming a layer whose file cannot be found is not an error here. The path is
+ * passed through and the reader reports it as unavailable *with the path it
+ * tried*, which is a better answer than refusing to draw anything.
+ */
+function resolveStrata(args: ParsedArgs, config: CliConfig): StrataOptions {
+  const requested = new Set(
+    (flagString(args.flags, "strata") ?? "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean),
+  );
+  const structureDb =
+    flagString(args.flags, "structure-db") ??
+    (requested.has("structure") ? join(dirname(config.databasePath), "structure.db") : undefined);
+  const contextDb =
+    flagString(args.flags, "context-db") ??
+    (requested.has("context") ? process.env["PMEM_BRAIN_DB"] : undefined);
+
+  const options: StrataOptions = {};
+  if (structureDb) options.structureDb = structureDb;
+  if (contextDb) options.contextDb = contextDb;
+  return options;
+}
+
 export async function runCommand(args: ParsedArgs, context: RunContext): Promise<string> {
   const { memory } = context;
   const asJson = args.flags.json === true;
@@ -444,19 +491,101 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
     case "graph": {
       const file = args.positional[1];
       if (args.sub === "export") {
-        if (!file) return "Usage: multi-memory graph export <file.html|file.json>";
+        if (!file) return GRAPH_USAGE;
         const asJson = file.endsWith(".json");
+        const strata = resolveStrata(args, context.config);
         const projection = asJson
-          ? exportGraphJson(memory, file)
-          : exportGraphHtml(memory, file);
+          ? exportGraphJson(memory, file, undefined, strata)
+          : exportGraphHtml(memory, file, undefined, undefined, strata);
         const { episodes, lessons, evidence, edges } = projection.counts;
         return [
           `wrote ${file}`,
           `  ${episodes} episode(s) · ${lessons} lesson(s) · ${evidence} evidence · ${edges} edge(s)`,
-          asJson ? "  nodes and edges as JSON" : "  open it in a browser; it is one self-contained file",
+          // Every layer reports, including the ones that gave nothing. A zero
+          // that does not say why is the defect this whole surface exists to
+          // remove, and a graph is a comfortable place for one to hide.
+          ...projection.strata.map((s) =>
+            s.available
+              ? `  ${s.stratum}: ${s.nodes} node(s), ${s.edges} edge(s)${s.reason ? ` — ${s.reason}` : ""}`
+              : `  ${s.stratum}: none — ${s.reason ?? "not available"}`,
+          ),
+          asJson
+            ? "  nodes and edges as JSON"
+            : "  open it in a browser — one file, no network, renders offline",
         ].join("\n");
       }
-      return "Usage: multi-memory graph export <file.html|file.json>";
+      return GRAPH_USAGE;
+    }
+
+    case "tui": {
+      // Dynamic: blessed is optional, and importing it at module load would
+      // make every other command pay for a dependency they do not use -- and
+      // fail outright where it is not installed.
+      const { runTui } = await import("../tui/screen.ts");
+      const strata = resolveStrata(args, context.config);
+      await runTui({
+        context,
+        strata,
+        ...(flagString(args.flags, "context-db") ?? process.env["PMEM_BRAIN_DB"]
+          ? { portfolioDb: flagString(args.flags, "context-db") ?? process.env["PMEM_BRAIN_DB"]! }
+          : {}),
+        // One command path: the panes call exactly what a headless invocation
+        // calls, so the two surfaces cannot drift into disagreeing.
+        runCommand: (line: string) => runCommand(parseArgs(line.split(" ").filter(Boolean)), context),
+      });
+      return "";
+    }
+
+    case "serve": {
+      const strata = resolveStrata(args, context.config);
+      const host = flagString(args.flags, "host") ?? DEFAULT_HOST;
+      const port = Number(flagString(args.flags, "port") ?? DEFAULT_PORT);
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        return `Not a port: ${flagString(args.flags, "port")}`;
+      }
+      const apiKey = flagString(args.flags, "api-key") ?? process.env["MULTI_MEMORY_SERVE_KEY"];
+
+      // Watch the stores this projection actually reads. builder.db is always
+      // one of them; the other two only when they were asked for.
+      const watchPaths = [context.config.databasePath, strata.structureDb, strata.contextDb].filter(
+        (path): path is string => typeof path === "string",
+      );
+
+      const running = startServe({
+        source: memory,
+        strata,
+        host,
+        port,
+        ...(apiKey ? { apiKey } : {}),
+        title: `${context.config.workspace}/${context.config.projectId} — memory graph`,
+        watchPaths,
+      });
+
+      // Nothing is announced until the socket is genuinely bound.
+      await running.ready;
+
+      console.log(`multi-memory serve — ${running.url}`);
+      if (running.posture.warning) console.warn(`  ${running.posture.warning}`);
+      console.log(`  auth: ${running.posture.enforcesAuth ? "X-Api-Key required" : "none (loopback only)"}`);
+      for (const leg of running.refresh().strata) {
+        console.log(
+          leg.available
+            ? `  ${leg.stratum}: ${leg.nodes} node(s), ${leg.edges} edge(s)${leg.reason ? ` — ${leg.reason}` : ""}`
+            : `  ${leg.stratum}: none — ${leg.reason ?? "not available"}`,
+        );
+      }
+      console.log(`  watching ${watchPaths.length} store(s); Ctrl-C to stop`);
+
+      // Block here. Returning would reach main()'s `finally`, which closes the
+      // storage this server is still reading from.
+      await new Promise<void>((resolveShutdown) => {
+        const stop = () => {
+          void running.close().then(() => resolveShutdown());
+        };
+        process.once("SIGINT", stop);
+        process.once("SIGTERM", stop);
+      });
+      return "serve stopped";
     }
 
     case "sync": {
@@ -760,7 +889,25 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 
   try {
     if (argv.length === 0) {
-      await interactive(context);
+      // The TUI is the interactive surface now. The numbered menu stays as the
+      // fallback rather than being deleted: blessed is an optional dependency,
+      // and "the interactive mode is gone because a package is missing" would
+      // be a worse answer than a plainer menu that still works.
+      try {
+        const { runTui } = await import("../tui/screen.ts");
+        await runTui({
+          context,
+          strata: resolveStrata(parseArgs([]), context.config),
+          ...(process.env["PMEM_BRAIN_DB"] ? { portfolioDb: process.env["PMEM_BRAIN_DB"] } : {}),
+          runCommand: (line: string) =>
+            runCommand(parseArgs(line.split(" ").filter(Boolean)), context),
+        });
+      } catch (error) {
+        console.warn(
+          `${error instanceof Error ? error.message : String(error)}\n\nFalling back to the menu.\n`,
+        );
+        await interactive(context);
+      }
       return 0;
     }
     console.log(await runCommand(args, context));

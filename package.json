@@ -33,6 +33,7 @@
   },
   "files": [
     "dist",
+    "vendor",
     "schemas",
     "README.md",
     "CHANGELOG.md",
@@ -56,16 +57,25 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "express": "^5.2.1",
+    "ws": "^8.21.3",
     "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.27",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.13.4",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.8.2"
   },
   "optionalDependencies": {
     "@google/genai": "^2.18.0",
+    "blessed": "npm:neo-blessed@^0.2.0",
+    "blessed-contrib": "^4.11.0",
     "sqlite-vec": "^0.1.9"
   },
-  "devDependencies": {
-    "@types/express": "^5.0.6",
-    "@types/node": "^22.13.4",
-    "typescript": "^5.8.2"
+  "overrides": {
+    "lodash": "^4.18.1",
+    "xml2js": "^0.6.2"
   },
   "allowScripts": {
     "@google/genai": false,

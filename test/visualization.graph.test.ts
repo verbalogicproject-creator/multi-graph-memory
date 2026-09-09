@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -16,7 +16,11 @@ import {
 import {
   deterministicColor,
   EXTERNAL_SCRIPTS,
+  readVendoredLibrary,
   ThreeJSGraphRenderer,
+  VENDORED_LIBRARY,
+  VENDORED_VERSION,
+  vendoredLibraryPath,
 } from "../src/visualization/threejs_renderer.ts";
 
 function seeded() {
@@ -165,7 +169,7 @@ test("every colour is legible against the page background", () => {
   }
 });
 
-test("the html export is self-contained and pins every external script", () => {
+test("the html export loads nothing over the network", () => {
   const { memory } = seeded();
   const dir = mkdtempSync(join(tmpdir(), "mgm-graph-"));
   const out = join(dir, "nested", "graph.html");
@@ -174,13 +178,55 @@ test("the html export is self-contained and pins every external script", () => {
 
   assert.match(html, /<!DOCTYPE html>/);
   assert.match(html, /demo title/);
+
+  // This test used to be called "self-contained and pins every external
+  // script", and asserted neither: it checked that the script list matched a
+  // declared list (which is not the same as being empty) and that each src
+  // matched /@\d+(\.\d+)*$/ -- a regex `@1` satisfies. `@1` is a range, so the
+  // page rendered differently as upstream published. Both halves now hold.
+  assert.deepEqual(EXTERNAL_SCRIPTS, [], "the declared external list is empty");
   const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(scripts, [...EXTERNAL_SCRIPTS], "only the declared externals");
-  // The point is the pin, not the count: an unpinned CDN reference means a
-  // rendered file's behaviour changes whenever upstream publishes.
-  for (const src of scripts) {
-    assert.match(String(src), /@\d+(\.\d+)*$/, `${src} must be pinned to a version`);
-  }
+  assert.deepEqual(scripts, [], "the page references no script by URL");
+  assert.doesNotMatch(html, /src\s*=\s*["']https?:/i, "no absolute http(s) resource at all");
+});
+
+test("the library is inlined at an exact version, and the file proves its own version", () => {
+  const { memory } = seeded();
+  const dir = mkdtempSync(join(tmpdir(), "mgm-graph-"));
+  const out = join(dir, "graph.html");
+  exportGraphHtml(memory, out, "demo title");
+  const html = readFileSync(out, "utf8");
+
+  // A range would let two renders of the same data differ. The version is in
+  // the filename AND in the file's own first line; `readVendoredLibrary`
+  // refuses when they disagree, so a swapped file cannot masquerade.
+  assert.match(VENDORED_VERSION, /^\d+\.\d+\.\d+$/, "an exact version, never a range");
+  assert.ok(VENDORED_LIBRARY.includes(VENDORED_VERSION), "the filename carries the version");
+  assert.ok(html.includes(`// Version ${VENDORED_VERSION} 3d-force-graph`),
+    "the library's own banner is present in the page, so the bytes really are inlined");
+  assert.ok(html.includes("ForceGraph3D"), "and it is the library, not a stub");
+
+  // The renderer's own script must come after the library it calls.
+  assert.ok(html.indexOf("// Version") < html.indexOf("ForceGraph3D()("),
+    "the library is defined before the page uses it");
+});
+
+test("a library that cannot be inlined safely is refused, not escaped", () => {
+  // `</script` inside the bytes would close the tag early and produce a page
+  // that loads clean and draws nothing. Today's pinned file has none; this
+  // asserts the guard exists for the version bump that introduces one.
+  const source = readFileSync(vendoredLibraryPath(), "utf8");
+  assert.ok(!source.toLowerCase().includes("</script"), "the pinned library is inlinable");
+  assert.throws(
+    () => {
+      const bad = `// Version ${VENDORED_VERSION} 3d-force-graph\nvar x = "</script>";`;
+      const dir = mkdtempSync(join(tmpdir(), "mgm-vendor-"));
+      mkdirSync(join(dir, "vendor"), { recursive: true });
+      writeFileSync(join(dir, "vendor", VENDORED_LIBRARY), bad, "utf8");
+      readVendoredLibrary(dir);
+    },
+    /cannot be inlined into a <script> tag safely/,
+  );
 });
 
 test("graph content is html-escaped rather than interpolated raw", () => {
@@ -282,7 +328,16 @@ test("the json export names its edge vocabulary and round-trips", () => {
   const projection = exportGraphJson(memory, out);
 
   const parsed = JSON.parse(readFileSync(out, "utf8"));
-  assert.equal(parsed.schemaVersion, 2, "2 since nodes carry `cluster`");
+  assert.equal(parsed.schemaVersion, 3, "3 since nodes carry `stratum` and the envelope carries `strata`");
+  // Three entries, always -- including the layers that contributed nothing.
+  // A consumer must be able to tell "not asked for" from "asked for and empty".
+  assert.deepEqual(
+    parsed.strata.map((s: { stratum: string }) => s.stratum),
+    ["governance", "structure", "context"],
+  );
+  for (const leg of parsed.strata as { available: boolean; reason?: string }[]) {
+    if (!leg.available) assert.ok(leg.reason, "an absent layer must say why");
+  }
   assert.deepEqual(parsed.scope, { workspace: "multi-app", projectId: "build-demo" });
   assert.deepEqual(parsed.edgeKinds, [...EDGE_KINDS]);
   assert.equal(parsed.nodes.length, projection.graphData.nodes.length);
