@@ -574,6 +574,43 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
         }
       }
 
+      /*
+       * Retirement candidates. A REPORT — it changes nothing, and it deliberately
+       * does not act, because the mechanism it would use (recordContradiction)
+       * demotes permanently and the reversal for it only just exists. Automating
+       * an irreversible demotion is how one mis-attributed failure deletes good
+       * guidance forever.
+       */
+      const recentCodes = new Set<string>();
+      for (const event of memory.queryEvents({ kinds: ["verification.completed"] })) {
+        const codes = event.payload["codes"];
+        if (codes && typeof codes === "object") for (const code of Object.keys(codes)) recentCodes.add(code);
+      }
+
+      const retirement = lessons
+        .map((lesson) => {
+          const seen = (surfaced.get(lesson.id) ?? 0) + (trialled.get(lesson.id) ?? 0);
+          const withdrawn = new Set((lesson.withdrawnContradictions ?? []).map((w) => w.evidenceId));
+          const standing = lesson.contradictionIds.filter((id) => !withdrawn.has(id));
+          const tags = lesson.triggerTags ?? [];
+          const reasons: string[] = [];
+
+          if (standing.length > 0) {
+            reasons.push(`${standing.length} unresolved contradiction(s)`);
+          }
+          if (seen >= 5 && lesson.reuseCount === 0) {
+            reasons.push(`surfaced ${seen} time(s) and never earned a reuse`);
+          }
+          /* Only claimed when there is something to compare against: with no
+             verdicts recorded, "its trigger has not recurred" would be a
+             statement about the absence of data, not about the lesson. */
+          if (recentCodes.size > 0 && tags.length > 0 && !tags.some((tag) => recentCodes.has(tag))) {
+            reasons.push(`none of its trigger tags (${tags.join(", ")}) appear in any recorded verdict`);
+          }
+          return { id: lesson.id, status: lesson.status, trigger: lesson.trigger, reasons };
+        })
+        .filter((row) => row.reasons.length > 0);
+
       const summary = {
         lessons: lessons.length,
         byStatus: Object.fromEntries(
@@ -593,7 +630,17 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
         dropped: { droppedForBudget, droppedForDiversity, droppedForDirectionBar },
       };
 
-      if (asJson) return out({ summary, lessons: rows }, true);
+      if (asJson) {
+        return out(
+          {
+            summary,
+            lessons: rows,
+            retirementCandidates: retirement,
+            note: "A report. Nothing here changes any status; retiring a lesson is a human act on the CLI.",
+          },
+          true,
+        );
+      }
 
       if (lessons.length === 0) return "No lessons in this project yet.";
 
@@ -638,6 +685,19 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
           `${row.status.padEnd(13)} ${String(seen).padStart(4)} ${String(row.applied).padStart(4)} ${String(row.reuseCount).padStart(5)}  ${row.trigger.slice(0, 60)}`,
         );
         lines.push(`${" ".repeat(13)} ↳ ${row.reason}`);
+      }
+
+      if (retirement.length > 0) {
+        lines.push("", `${retirement.length} retirement candidate(s) — a REPORT, nothing was changed:`);
+        for (const row of retirement) {
+          lines.push(`  ${row.status.padEnd(13)} ${row.trigger.slice(0, 56)}`);
+          for (const reason of row.reasons) lines.push(`${" ".repeat(15)}· ${reason}`);
+        }
+        lines.push(
+          "  Retiring one is a human act: `multi-memory lesson revoke <id> --reason <text>`.",
+          "  Recording a contradiction instead demotes it permanently; withdraw with",
+          "  `lesson withdraw-contradiction` if that turns out to be wrong.",
+        );
       }
 
       lines.push(

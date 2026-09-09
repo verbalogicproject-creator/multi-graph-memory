@@ -538,3 +538,55 @@ test("the ladder counts a lesson as surfaced only when telemetry names it", asyn
     cleanup();
   }
 });
+
+test("the retirement report names its reasons and changes no state", async () => {
+  // A report, deliberately. The mechanism it would otherwise use —
+  // recordContradiction — demotes permanently, and the reversal for that only
+  // just exists. Automating an irreversible demotion is how one mis-attributed
+  // failure deletes good guidance forever.
+  const { context, cleanup } = setup();
+  try {
+    const m = context.memory;
+    const source = m.openEpisode({ objective: "a build", baseRevisionId: "rev-1" });
+    m.closeEpisode(source.id, "verified");
+    const evidence = m.recordEvidence({ kind: "verification.result", ref: "run://retire" });
+
+    const lesson = m.proposeLesson({
+      trigger: "a lesson whose trigger never recurs",
+      recommendation: "do the thing",
+      scope: ["build"], domain: "build",
+      sourceEpisodeIds: [source.id], evidenceIds: [evidence.id],
+      triggerTags: ["a-code-that-never-happens"],
+    });
+
+    // A verdict exists, carrying a DIFFERENT code — so "its trigger has not
+    // recurred" is a comparison rather than a statement about missing data.
+    m.appendEvent({
+      projectId: "cli-demo",
+      kind: "verification.completed",
+      occurredAt: new Date().toISOString(),
+      cycleId: "c1", phaseId: "builder", episodeId: source.id,
+      payload: { ok: false, codes: { "some-other-code": 1 } },
+      evidenceIds: [],
+    });
+
+    const before = JSON.stringify(m.listLessons({}));
+    const json = JSON.parse(await run("ladder --json", context)) as {
+      retirementCandidates: { id: string; reasons: string[] }[];
+      note: string;
+    };
+    const after = JSON.stringify(m.listLessons({}));
+
+    assert.equal(before, after, "a report must not change a single field");
+    assert.match(json.note, /Nothing here changes any status/);
+
+    const row = json.retirementCandidates.find((r) => r.id === lesson.id);
+    assert.ok(row, "a lesson whose trigger never appears in any verdict is a candidate");
+    assert.ok(
+      row.reasons.some((reason) => /trigger tags/.test(reason)),
+      `the reason must name why: ${JSON.stringify(row.reasons)}`,
+    );
+  } finally {
+    cleanup();
+  }
+});

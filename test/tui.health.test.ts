@@ -6,7 +6,7 @@
  * from an absence. The terminal layer holds only layout and key bindings.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -140,4 +140,33 @@ test("formatAge reads naturally at every scale", () => {
   assert.equal(formatAge(16 * 60_000), "16m ago");
   assert.equal(formatAge(3 * 3_600_000), "3h ago");
   assert.equal(formatAge(13 * 24 * 3_600_000), "13d ago");
+});
+
+/* ------------------------------------------------------- advertised vs bound -- */
+
+test("every key the act pane advertises is actually bound", () => {
+  /*
+   * `v  revoke a lesson` was printed in this pane with no handler behind it —
+   * a menu line promising an action that did nothing, in a surface built to
+   * remove exactly that kind of claim. Small, and the same shape as every other
+   * defect in this system: something says it can do a thing and cannot.
+   *
+   * Read from the source rather than from a rendered screen, because rendering
+   * needs a terminal and this property is about the code, not the paint.
+   */
+  const source = readFileSync(new URL("../src/tui/screen.ts", import.meta.url), "utf8");
+
+  // Menu lines look like:  "  a  approve a lesson   (human only...)"
+  const advertised = new Set(
+    [...source.matchAll(/"\s{2}([a-z])\s{2}[a-z]/g)].map((match) => match[1] as string),
+  );
+  const bound = new Set(
+    [...source.matchAll(/screen\.key\(\[([^\]]*)\]/g)]
+      .flatMap((match) => (match[1] ?? "").split(","))
+      .map((key) => key.trim().replace(/^["']|["']$/g, "")),
+  );
+
+  assert.ok(advertised.size > 0, "the act pane must advertise something, or this test proves nothing");
+  const unbound = [...advertised].filter((key) => !bound.has(key));
+  assert.deepEqual(unbound, [], `advertised but not bound: ${unbound.join(", ")}`);
 });

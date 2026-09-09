@@ -127,7 +127,8 @@ export async function runTui(options: TuiOptions): Promise<void> {
           "{bold}Actions{/bold}",
           "",
           "  a  approve a lesson   (human only, and only here)",
-          "  v  revoke a lesson",
+          "  v  revoke a lesson    (human only)",
+          "  w  withdraw a contradiction (human only)",
           "  d  doctor",
           "",
           ...wrap(
@@ -224,6 +225,36 @@ export async function runTui(options: TuiOptions): Promise<void> {
         if (!by) return;
         body.setContent(await runAndFormat(`lesson approve ${id} --by ${by}`, "act"));
         screen.render();
+      });
+    });
+  });
+  /* `v` was advertised in this pane with no handler bound: a menu line promising
+     an action that did nothing. Small, but it is the same shape as every other
+     defect here — a surface that says it can do something and cannot. */
+  screen.key(["v"], () => {
+    if (pane !== "act") return;
+    prompt("lesson id to revoke: ", async (id) => {
+      if (!id) return;
+      prompt("reason (required): ", async (reason) => {
+        if (!reason) return;
+        body.setContent(await runAndFormat(`lesson revoke ${id} --reason ${reason}`, "act"));
+        screen.render();
+      });
+    });
+  });
+  screen.key(["w"], () => {
+    if (pane !== "act") return;
+    prompt("lesson id: ", async (id) => {
+      if (!id) return;
+      prompt("contradiction evidence id: ", async (evidenceId) => {
+        if (!evidenceId) return;
+        prompt("reason (required): ", async (reason) => {
+          if (!reason) return;
+          body.setContent(
+            await runAndFormat(`lesson withdraw-contradiction ${id} --evidence ${evidenceId} --reason ${reason}`, "act"),
+          );
+          screen.render();
+        });
       });
     });
   });
