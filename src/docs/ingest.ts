@@ -16,6 +16,7 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { sha256Hex } from "../core/canonical.ts";
+import { currentEvidenceFor } from "../core/evidence.ts";
 import { assertRedactionBoundary } from "../core/redaction.ts";
 import { parseDocument } from "./frontmatter.ts";
 import type { GraphMemory } from "../port.ts";
@@ -86,6 +87,16 @@ export interface IngestResult {
   sections: number;
   evidence: Evidence[];
   skipped: string[];
+  /**
+   * What the ingest actually changed, per section. `unchanged` is the honest
+   * answer for a re-run over an untouched file; `superseded` is the answer this
+   * whole record type exists to be able to give, and until evidence carried a
+   * digest in its identity it was unreachable -- an edit under an unchanged
+   * heading returned the first-recorded row and reported success.
+   */
+  created: number;
+  unchanged: number;
+  superseded: number;
 }
 
 /**
@@ -104,6 +115,9 @@ export function ingestAuthoredDocument(memory: GraphMemory, path: string): Inges
       sections: 0,
       evidence: [],
       skipped: ["this is a generated projection; the database already holds its records"],
+      created: 0,
+      unchanged: 0,
+      superseded: 0,
     };
   }
 
@@ -111,6 +125,14 @@ export function ingestAuthoredDocument(memory: GraphMemory, path: string): Inges
   const sections = parseSections(raw);
   const evidence: Evidence[] = [];
   const skipped: string[] = [];
+  let created = 0;
+  let unchanged = 0;
+  let superseded = 0;
+
+  // One read of the project's evidence, resolved per section against that
+  // snapshot. Reading per section would be O(sections x records) for a result
+  // that cannot change mid-ingest.
+  const known = memory.listEvidence();
 
   for (const section of sections) {
     if (section.body.trim().length === 0) continue;
@@ -123,16 +145,31 @@ export function ingestAuthoredDocument(memory: GraphMemory, path: string): Inges
       continue;
     }
 
-    evidence.push(
-      memory.recordEvidence({
-        kind: "authored.document",
-        // A stable ref: same file and heading path yields the same evidence id.
-        ref: `doc://${file}#${section.breadcrumb.join("/") || section.title}`,
-        digest: sha256Hex(content),
-        summary: `${section.breadcrumb.join(" > ")} (lines ${section.startLine}-${section.endLine})`,
-      }),
-    );
+    const kind = "authored.document";
+    // A stable ref: the same file and heading path always names the same claim.
+    // The *identity* of the record additionally folds in the digest, so an edit
+    // under an unchanged heading is a new record that supersedes the old one
+    // rather than a lookup that silently returns it.
+    const ref = `doc://${file}#${section.breadcrumb.join("/") || section.title}`;
+    const digest = sha256Hex(content);
+    const previous = currentEvidenceFor(known, kind, ref);
+    const isRevision = previous !== null && previous.digest !== digest;
+
+    const record = memory.recordEvidence({
+      kind,
+      ref,
+      digest,
+      summary: `${section.breadcrumb.join(" > ")} (lines ${section.startLine}-${section.endLine})`,
+      ...(isRevision ? { supersedesEvidenceId: previous.id } : {}),
+    });
+
+    if (isRevision) superseded += 1;
+    else if (previous !== null) unchanged += 1;
+    else created += 1;
+
+    known.push(record);
+    evidence.push(record);
   }
 
-  return { path, sections: sections.length, evidence, skipped };
+  return { path, sections: sections.length, evidence, skipped, created, unchanged, superseded };
 }

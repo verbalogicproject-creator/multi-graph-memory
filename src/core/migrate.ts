@@ -4,18 +4,19 @@
  * One ladder is shared by every adapter, so a bundle exported from SQLite and
  * imported into the browser projection follows the identical route.
  *
- * The ladder holds one real step today (1 -> 2, attribution) and still exercises
- * its refusal paths: version 0 is not a valid version, and a version-3 bundle is
- * refused as a downgrade rather than silently stripped.
+ * The ladder holds two steps today (1 -> 2 attribution, 2 -> 3 evidence
+ * supersession) and still exercises its refusal paths: version 0 is not a valid
+ * version, and a bundle newer than this build is refused as a downgrade rather
+ * than silently stripped.
  */
 
 import { refuse } from "./errors.ts";
 
-/** 2: provider/model/surface attribution on events, provider/model on episodes. */
-export const CURRENT_SCHEMA_VERSION = 2;
+/** 3: evidence carries an optional supersedes pointer, and its id includes the digest. */
+export const CURRENT_SCHEMA_VERSION = 3;
 
 /** Versions this build can read at all, before any migration is attempted. */
-export const SUPPORTED_SCHEMA_VERSIONS: readonly number[] = [1, 2];
+export const SUPPORTED_SCHEMA_VERSIONS: readonly number[] = [1, 2, 3];
 
 export interface Migration {
   from: number;
@@ -37,6 +38,22 @@ export const MIGRATIONS: readonly Migration[] = [
      * record. Nothing is back-filled -- inventing an attribution for a record
      * written before attribution existed would manufacture evidence. Those
      * records stay honestly unattributed.
+     */
+    apply: (bundle) => bundle,
+  },
+  {
+    from: 2,
+    to: 3,
+    describe: "adds an optional supersedes pointer to evidence",
+    /**
+     * Identity, for the same reason as 1 -> 2: version 3 only ADDS an optional
+     * field, so every version-2 evidence record is already a valid version-3
+     * record. Ids are deliberately NOT recomputed. `deriveEvidenceId` folds in a
+     * digest only when one is present, so a record written without a digest
+     * derives the identical id under either version; a record written WITH one
+     * keeps the id it was stored and exported under, and its next revision
+     * supersedes it rather than colliding with it. Recomputing here would break
+     * every checksum in a bundle to no purpose.
      */
     apply: (bundle) => bundle,
   },

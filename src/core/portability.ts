@@ -141,12 +141,24 @@ export function rehomeRecords(
   const episodeIds = new Map<string, string>();
   const eventIds = new Map<string, string>();
 
+  // Two passes, because an evidence record may supersede another one in the same
+  // bundle and the pointer has to be rewritten to the id its target ACQUIRES,
+  // which is not known until every new id is derived. A single pass would remap
+  // correctly only when the bundle happened to be ordered oldest-first.
   const evidence = bundle.evidence.map((record) => {
     const moved = { ...record, projectId: targetProjectId };
-    moved.id = deriveEvidenceId(moved.projectId, moved.kind, moved.ref);
+    moved.id = deriveEvidenceId(moved.projectId, moved.kind, moved.ref, moved.digest);
     evidenceIds.set(record.id, moved.id);
     return moved;
   });
+  for (const record of evidence) {
+    if (record.supersedesEvidenceId === undefined) continue;
+    const target = evidenceIds.get(record.supersedesEvidenceId);
+    // A pointer that cannot be remapped is dropped rather than left dangling,
+    // the same rule the `remap` helper below applies to id lists.
+    if (target === undefined) delete record.supersedesEvidenceId;
+    else record.supersedesEvidenceId = target;
+  }
 
   const episodes = bundle.episodes.map((record) => {
     const moved = { ...record, projectId: targetProjectId };

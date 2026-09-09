@@ -120,6 +120,24 @@ export function deriveLessonId(projectId: string, trigger: string, recommendatio
   return `les_${contentDigest({ projectId, trigger, recommendation, domain })}`;
 }
 
-export function deriveEvidenceId(projectId: string, kind: string, ref: string): string {
-  return `evd_${contentDigest({ projectId, kind, ref })}`;
+/**
+ * Deterministic evidence identity, including the digest when one was supplied.
+ *
+ * The digest belongs in the identity because evidence is a claim about *content*
+ * at a reference, not about the reference alone. While it was excluded,
+ * `recordEvidenceTx` returned the first-recorded row forever: re-ingesting an
+ * edited document section under an unchanged heading was a silent no-op, and a
+ * staleness check built on stored digests could never trip.
+ *
+ * The supersedes pointer is deliberately NOT hashed. Identity stays purely
+ * content-addressed, so recording the same content twice is idempotent no matter
+ * how long the correction chain behind it has grown. Events hash their pointer
+ * because an event is an occurrence; evidence is a fact about bytes.
+ *
+ * A record with no digest hashes exactly the three fields it always hashed, so
+ * every id derived before this change is byte-identical afterwards.
+ */
+export function deriveEvidenceId(projectId: string, kind: string, ref: string, digest?: string): string {
+  const identity = digest === undefined ? { projectId, kind, ref } : { projectId, kind, ref, digest };
+  return `evd_${contentDigest(identity)}`;
 }

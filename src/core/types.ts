@@ -197,6 +197,12 @@ export interface Evidence {
   /** SHA-256 of the referenced material, when the producer supplied one. */
   digest?: string;
   summary?: string;
+  /**
+   * Extension: a re-record of the same reference with different content points at
+   * the record it replaces. Corrections are new records; nothing is edited in
+   * place. Mirrors `supersedesEventId`.
+   */
+  supersedesEvidenceId?: string;
 }
 
 /* ---------------------------------------------------------------- lessons -- */

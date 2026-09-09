@@ -98,6 +98,7 @@ export const evidenceSchema = z.object({
   recordedAt: isoDateTime,
   digest: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   summary: shortText.optional(),
+  supersedesEvidenceId: identifier.optional(),
 });
 
 export const lessonProposalSchema = facetsSchema.extend({

@@ -102,9 +102,11 @@ CREATE TABLE IF NOT EXISTS evidence (
   ref         TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
   digest      TEXT,
-  summary     TEXT
+  summary     TEXT,
+  supersedes_evidence_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_project ON evidence(project_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(project_id, kind, ref);
 `;
 
 /** Full-text index over lesson prose. Populated here; queried by the relevance layer. */
@@ -215,6 +217,7 @@ function decodeEvidence(row: Row): Evidence {
   };
   put(evidence, "digest", row.digest);
   put(evidence, "summary", row.summary);
+  put(evidence, "supersedesEvidenceId", row.supersedes_evidence_id);
   return evidence as unknown as Evidence;
 }
 
@@ -374,10 +377,12 @@ class SqliteTx implements StorageTx {
   putEvidenceIfAbsent(evidence: Evidence): boolean {
     if (this.getEvidence(evidence.id)) return false;
     this.db
-      .prepare("INSERT INTO evidence (id, project_id, kind, ref, recorded_at, digest, summary) VALUES (?,?,?,?,?,?,?)")
+      .prepare(
+        "INSERT INTO evidence (id, project_id, kind, ref, recorded_at, digest, summary, supersedes_evidence_id) VALUES (?,?,?,?,?,?,?,?)",
+      )
       .run(
         evidence.id, evidence.projectId, evidence.kind, evidence.ref, evidence.recordedAt,
-        evidence.digest ?? null, evidence.summary ?? null,
+        evidence.digest ?? null, evidence.summary ?? null, evidence.supersedesEvidenceId ?? null,
       );
     return true;
   }
@@ -473,6 +478,7 @@ export class SqliteStorageAdapter implements StorageAdapter, LexicalIndex {
     // safe once every column exists. Keeping them in SCHEMA would make opening
     // a v1 file fail on an index that references a column not yet added.
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_provider ON events(project_id, provider);");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(project_id, kind, ref);");
   }
 
   /**
@@ -496,6 +502,13 @@ export class SqliteStorageAdapter implements StorageAdapter, LexicalIndex {
       if (!episodeColumns.has("provider")) db.exec("ALTER TABLE episodes ADD COLUMN provider TEXT");
       if (!episodeColumns.has("model")) db.exec("ALTER TABLE episodes ADD COLUMN model TEXT");
 
+    }
+
+    if (version < 3) {
+      const evidenceColumns = columnNames(db, "evidence");
+      if (!evidenceColumns.has("supersedes_evidence_id")) {
+        db.exec("ALTER TABLE evidence ADD COLUMN supersedes_evidence_id TEXT");
+      }
     }
 
     this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
