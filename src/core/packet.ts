@@ -136,13 +136,18 @@ export function assemblePacket(
 
   // 4. Character budget, applied last so it trims a already-diverse set.
   const items: CitedItem[] = [];
-  let usedChars = 0;
+  /* The header, the advisory and the closing note are emitted for every packet
+     and were never counted against the ceiling. Charged up front, so `maxChars`
+     bounds what the model actually receives rather than a subset of it. */
+  let usedChars = overheadFor(scope, options.task, ADVISORY_NOTE);
   let droppedForBudget = 0;
   for (const item of kept) {
     const body = item.body.length > DEFAULT_ITEM_CHARS
       ? `${item.body.slice(0, DEFAULT_ITEM_CHARS)}\n... [truncated] ...`
       : item.body;
-    const cost = body.length + item.title.length + item.citation.length;
+    /* Measured through the renderer itself, so the cost cannot drift from the
+       output the way it did when this counted three fields by hand. */
+    const cost = renderItem({ ...item, body }, items.length).length + "\n\n---\n\n".length;
     if (items.length > 0 && usedChars + cost > maxChars) {
       droppedForBudget += 1;
       continue;
@@ -178,6 +183,48 @@ export function assemblePacket(
 }
 
 /** Human- and model-readable rendering. Citations and omissions are never dropped. */
+/**
+ * One item, exactly as the model receives it.
+ *
+ * Extracted so the character budget and the renderer cannot drift. They had:
+ * the budget cost an item at `body + title + citation`, while this emitted five
+ * more labelled lines, a fenced citation and the markdown scaffolding around
+ * them. Every packet therefore overran its own stated ceiling by roughly 150
+ * characters per item plus a header — a budget that was measuring something
+ * other than what it was budgeting.
+ */
+export function renderItem(item: CitedItem, index: number): string {
+  const parts = [
+    `### [${index + 1}] ${item.title}`,
+    `**Citation:** \`${item.citation}\``,
+    `**Scope:** ${item.scope.join(", ")}`,
+    `**Freshness:** ${item.ageDays} day(s) old`,
+    `**Why surfaced:** ${item.reason}`,
+  ];
+  if (item.component) parts.push(`**Component:** \`${item.component}\``);
+  if (item.limits.length > 0) parts.push(`**Known limits:** ${item.limits.join("; ")}`);
+  return `${parts.join("\n")}\n\n${item.body}`;
+}
+
+/**
+ * What the header and footer cost before a single item is added.
+ *
+ * Also never counted. The advisory alone is ~250 characters and is emitted on
+ * every packet. The two counts are not known until the budget has run, so they
+ * are reserved at their widest plausible width rather than guessed at zero —
+ * reserving too little is how a ceiling silently stops being one.
+ */
+export function overheadFor(scope: ProjectScope, task: string, advisory: string): number {
+  return [
+    `# Project Memory`,
+    `**Task:** ${task}`,
+    `**Scope:** ${scope.workspace}/${scope.projectId}`,
+    `**Showing:** 0000 of 0000 candidate(s)`,
+    `**Authority:** context_only — ${advisory}`,
+    `---`,
+  ].join("\n\n").length;
+}
+
 export function renderPacket(packet: ContextPacket): string {
   if (packet.items.length === 0) {
     return [
@@ -199,16 +246,7 @@ export function renderPacket(packet: ContextPacket): string {
   ];
 
   packet.items.forEach((item, index) => {
-    const parts = [
-      `### [${index + 1}] ${item.title}`,
-      `**Citation:** \`${item.citation}\``,
-      `**Scope:** ${item.scope.join(", ")}`,
-      `**Freshness:** ${item.ageDays} day(s) old`,
-      `**Why surfaced:** ${item.reason}`,
-    ];
-    if (item.component) parts.push(`**Component:** \`${item.component}\``);
-    if (item.limits.length > 0) parts.push(`**Known limits:** ${item.limits.join("; ")}`);
-    sections.push(`${parts.join("\n")}\n\n${item.body}`);
+    sections.push(renderItem(item, index));
     sections.push(`---`);
   });
 
