@@ -443,14 +443,25 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
          number the ladder does not use. */
       const applied = new Map<string, number>();
       const appliedInVerified = new Map<string, number>();
+      const appliedInOpen = new Map<string, number>();
       for (const episode of episodes) {
         for (const id of episode.appliedLessonIds) {
           applied.set(id, (applied.get(id) ?? 0) + 1);
           if (episode.outcome === "verified") {
             appliedInVerified.set(id, (appliedInVerified.get(id) ?? 0) + 1);
+          } else if (!episode.closedAt) {
+            /* An episode that never closed is a permanent dead end for anything
+               applied in it: reuse requires a VERIFIED outcome and an open
+               episode has no outcome at all. Nothing else in the system reports
+               this, so a lesson can sit blocked forever behind an attempt
+               someone reloaded away from -- and it looks identical to a lesson
+               that was tried and simply did not help. */
+            appliedInOpen.set(id, (appliedInOpen.get(id) ?? 0) + 1);
           }
         }
       }
+
+      const openEpisodes = episodes.filter((episode) => !episode.closedAt).length;
 
       /** The rung, and the specific thing standing between it and the next one. */
       const stateOf = (lesson: (typeof lessons)[number]) => {
@@ -481,10 +492,19 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
           return { blocked: true, reason: `surfaced ${seen} time(s) but never recorded as applied` };
         }
         if (verifiedApplications === 0) {
-          return {
-            blocked: true,
-            reason: `applied in ${applications} episode(s), none of which closed verified — reuse requires a verified outcome`,
-          };
+          const stillOpen = appliedInOpen.get(lesson.id) ?? 0;
+          /* "Still open" and "closed without verifying" are different problems
+             and must not share a sentence: the first is an attempt nobody
+             finished, the second is guidance that did not work. */
+          return stillOpen > 0
+            ? {
+                blocked: true,
+                reason: `applied in ${applications} episode(s); ${stillOpen} of them never closed, so reuse can never be recorded against them`,
+              }
+            : {
+                blocked: true,
+                reason: `applied in ${applications} episode(s), none of which closed verified — reuse requires a verified outcome`,
+              };
         }
         return { blocked: true, reason: `applied in ${verifiedApplications} verified episode(s) but reuse was never recorded` };
       };
@@ -529,6 +549,11 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
             lessons.filter((l) => l.status === s).length,
           ]),
         ),
+        episodes: {
+          total: episodes.length,
+          verified: episodes.filter((e) => e.outcome === "verified").length,
+          open: openEpisodes,
+        },
         recallsRecorded: recalls.length,
         trialsRecorded: trials.length,
         recallOutcomes: Object.fromEntries(outcomes),
@@ -561,6 +586,15 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
           `${recalls.length} recall(s), ${trials.length} trial(s) recorded. Outcomes: ` +
             [...outcomes.entries()].map(([o, n]) => `${o} ${n}`).join(", "),
           `Dropped across all recalls — budget ${droppedForBudget}, diversity ${droppedForDiversity}, direction bar ${droppedForDirectionBar}`,
+        );
+      }
+
+      if (openEpisodes > 0) {
+        lines.push(
+          "",
+          `${openEpisodes} of ${episodes.length} episode(s) never closed. Reuse requires a VERIFIED`,
+          "outcome, so anything applied inside them can never climb. Nothing else in",
+          "this system reports that, and it looks exactly like guidance that did not help.",
         );
       }
 
