@@ -10,6 +10,7 @@
  */
 
 import readline from "node:readline/promises";
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { SqliteStorageAdapter } from "../adapters/sqlite.ts";
@@ -20,6 +21,8 @@ import { projectDocuments } from "../docs/projector.ts";
 import { exportGraphHtml, exportGraphJson, type StrataOptions } from "../visualization/index.ts";
 import { startServe, DEFAULT_HOST, DEFAULT_PORT } from "../serve/index.ts";
 import { ingestAuthoredDocument } from "../docs/ingest.ts";
+import { GIT_FORMAT, parseCommits, summarise as summariseCommits } from "../session/harvest.ts";
+import { parseTranscript, summariseFriction } from "../session/transcript.ts";
 import { ControlStore } from "../control/registry.ts";
 import { federatedQuery } from "../control/federation.ts";
 import { ensureClusterDir, loadConfig, type CliConfig } from "./config.ts";
@@ -44,6 +47,9 @@ multi-memory — governed episodic and lesson memory
                       [--surface S] [--component C] [--since ISO] [--limit N] [--json]
   multi-memory attribution                                who produced what, by provider
   multi-memory ladder                                     is anything climbing, and which rung is stuck
+  multi-memory session <repo> [--transcripts DIR] [--since REF] [--json]
+                      what the work itself says: fix hotspots from git,
+                      friction from Claude Code's own transcripts
   multi-memory docs generate [--dir <path>]
   multi-memory docs ingest <file>
   multi-memory graph export <file.html|file.json>       3D graph, or nodes+edges
@@ -612,6 +618,113 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
         "'seen' counts governed recalls plus unproven trials. A lesson climbs only by",
         "being applied in a LATER, DIFFERENT episode that closed verified; approval",
         "after that is a human act and is deliberately unavailable to any model.",
+      );
+      return lines.join("\n");
+    }
+
+    /**
+     * The session ladder: learn from the work that actually happens.
+     *
+     * Two sources, both already on disk and both disciplined, so nothing new has
+     * to be logged. Git says what was FIXED — the outcome, with a receipt.
+     * Claude Code's transcripts say what was ATTEMPTED — the errors, the retries
+     * and the moments a human stopped the run, none of which reach a commit.
+     * Measured on this estate the second sees roughly 2.5x the activity of the
+     * first.
+     *
+     * Both land on the Phase 2 component key, so a session finding shares an
+     * address with a structural node and a context atom.
+     *
+     * This case is the IO. Every rule it reports lives in `src/session/`, pure
+     * and covered by `node --test`.
+     */
+    case "session": {
+      const repoPath = resolve(args.positional[0] ?? process.cwd());
+      if (!existsSync(join(repoPath, ".git"))) {
+        return `Not a git repository: ${repoPath}\nUsage: multi-memory session <repo> [--transcripts DIR] [--since REF] [--json]`;
+      }
+      const repo = basename(repoPath);
+      const since = flagString(args.flags, "since");
+
+      let commits: ReturnType<typeof parseCommits> = [];
+      let gitNote = "";
+      try {
+        const range = since ? [`${since}..HEAD`] : [];
+        const raw = execFileSync(
+          "git",
+          ["-C", repoPath, "log", "--all", "--name-only", `--pretty=format:${GIT_FORMAT}`, ...range],
+          { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+        );
+        commits = parseCommits(raw);
+      } catch (error) {
+        gitNote = `git log failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`;
+      }
+      const fromGit = summariseCommits(commits, repo);
+
+      /* Claude Code files a project's transcripts under the cwd with every
+         separator replaced by a dash. Derived rather than guessed, and
+         overridable, because a wrong directory would report "no sessions" —
+         which is indistinguishable from "no work happened" unless it says so. */
+      const transcriptDir =
+        flagString(args.flags, "transcripts") ??
+        join(process.env["HOME"] ?? "/root", ".claude", "projects", repoPath.replace(/\//g, "-"));
+
+      const sessions = [];
+      let transcriptNote = "";
+      if (existsSync(transcriptDir)) {
+        for (const name of readdirSync(transcriptDir).filter((f) => f.endsWith(".jsonl")).sort()) {
+          try {
+            sessions.push(parseTranscript(readFileSync(join(transcriptDir, name), "utf8").split("\n")));
+          } catch (error) {
+            transcriptNote += `\n  could not read ${name}: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
+      } else {
+        transcriptNote = `no transcript directory at ${transcriptDir} — pass --transcripts to point at one`;
+      }
+      const friction = summariseFriction(sessions, { repoRoot: repoPath, repo });
+
+      if (asJson) {
+        return out({ repo, repoPath, transcriptDir, git: fromGit, friction, gitNote, transcriptNote }, true);
+      }
+
+      const lines: string[] = [`session ladder — ${repo}`, ""];
+      if (gitNote) lines.push(`  ${gitNote}`, "");
+
+      lines.push(
+        `git: ${fromGit.commits} commit(s), ${fromGit.fixes} fix(es), ` +
+          `${fromGit.withTestDelta} stating a test delta, ${fromGit.claimingRevertProof} claiming revert-proof`,
+        `  ${fromGit.note}`,
+      );
+      for (const spot of fromGit.hotspots.slice(0, 10)) {
+        lines.push(`  ${String(spot.fixes).padStart(3)} fixes / ${String(spot.touches).padStart(3)} touches  ${spot.path}`);
+      }
+
+      lines.push("", `transcripts: ${friction.note}`);
+      if (transcriptNote) lines.push(`  ${transcriptNote.trim()}`);
+      if (friction.sessions > 0) {
+        lines.push(
+          `  ${friction.toolUses} tool use(s); errors by tool: ` +
+            Object.entries(friction.errorsByTool)
+              .sort((a, b) => b[1] - a[1])
+              .map(([tool, n]) => `${tool} ${n}`)
+              .join(", "),
+        );
+        for (const point of friction.hotFiles.slice(0, 10)) {
+          lines.push(`  ${String(point.edits).padStart(3)} edits across ${String(point.sessions).padStart(2)} session(s)  ${point.path}`);
+        }
+        if (friction.repeatedFailures.length > 0) {
+          lines.push("", "  retried after failing (the clearest evidence of something genuinely hard):");
+          for (const failure of friction.repeatedFailures.slice(0, 5)) {
+            lines.push(`    x${failure.count}  ${failure.target.replace(/\s*\n\s*/g, " ; ").slice(0, 96)}`);
+          }
+        }
+      }
+
+      lines.push("", "  " + friction.limits.join("\n  "));
+      lines.push(
+        "",
+        `${fromGit.proposals.length} lesson(s) would be proposed. Nothing was written: this command reads.`,
       );
       return lines.join("\n");
     }
