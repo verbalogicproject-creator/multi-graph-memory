@@ -643,7 +643,12 @@ export async function runCommand(args: ParsedArgs, context: RunContext): Promise
               path: full,
               sizeBytes: stat.size,
               modified: stat.mtime.toISOString(),
-              ageDays: (Date.now() - stat.mtimeMs) / 86_400_000,
+              // Clamped at zero, the way rank_fusion.ts already clamps its own
+              // age. A file written this instant can carry an mtime a fraction
+              // ahead of Date.now(), which made its age negative and hid it from
+              // `--older-than 0` -- an age that means "everything". It failed
+              // roughly one CI run in three and never on a slower machine.
+              ageDays: Math.max(0, Date.now() - stat.mtimeMs) / 86_400_000,
             };
           })
           .sort((a, b) => a.ageDays - b.ageDays);

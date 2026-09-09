@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HELP, openMemory, runCommand, formatError } from "../src/cli/multi-memory.ts";
@@ -394,6 +394,28 @@ test("a backup taken while the store is open is complete, not a stale snapshot",
     } finally {
       restored.storage.close();
     }
+  } finally {
+    cleanup();
+  }
+});
+
+test("a database newer than the clock is still older than zero days", async () => {
+  // `--older-than 0` means everything, so a file whose mtime sits a fraction
+  // AHEAD of Date.now() must still match. Unclamped, its age went negative and
+  // it vanished from the listing. Forced here rather than raced: a future mtime
+  // makes the condition deterministic instead of one-run-in-three.
+  const { context, cleanup } = setup();
+  try {
+    const cluster = context.config.clusterDir;
+    mkdirSync(cluster, { recursive: true });
+    const future = join(cluster, "just-written.db");
+    writeFileSync(future, "");
+    const ahead = new Date(Date.now() + 60_000);
+    utimesSync(future, ahead, ahead);
+
+    const dry = await run("prune --older-than 0", context);
+    assert.match(dry, /Dry run/);
+    assert.match(dry, /just-written/);
   } finally {
     cleanup();
   }
